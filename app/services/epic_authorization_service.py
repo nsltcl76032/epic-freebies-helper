@@ -785,11 +785,6 @@ class EpicAuthorization:
             status = await self._get_login_status(timeout_ms=1500)
             if status == "true":
                 return
-            if status == "false":
-                raise RuntimeError(
-                    "Epic store still reports isloggedin=false after authentication. "
-                    f"current_url={self.page.url}"
-                )
 
             if not account_probe_attempted and time.monotonic() >= account_probe_at:
                 account_probe_attempted = True
