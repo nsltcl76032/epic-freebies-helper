@@ -1296,11 +1296,22 @@ class _GLMAsyncModels:
         if config is None:
             raise ValueError("config is required for GLM compatibility mode")
 
-        endpoint = _resolve_openai_compatible_endpoint(self._settings.GLM_BASE_URL)
+        endpoint = _resolve_openai_compatible_endpoint(
+            getattr(self._settings, "GLM_BASE_URL", None)
+            or getattr(self._settings, "GEMINI_BASE_URL", "")
+        )
+        api_key_secret = getattr(self._settings, "GLM_API_KEY", None) or getattr(
+            self._settings, "GEMINI_API_KEY", None
+        )
+        api_key = (
+            api_key_secret.get_secret_value()
+            if hasattr(api_key_secret, "get_secret_value")
+            else str(api_key_secret or "")
+        )
 
         payload = self._build_payload(model=model, contents=contents, config=config, kwargs=kwargs)
         headers = {
-            "Authorization": f"Bearer {self._settings.GLM_API_KEY.get_secret_value()}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
 
@@ -1397,6 +1408,20 @@ def apply_gemini_patch(settings: Any):
             return types.File(name=file_id, uri=file_id, mime_type=_guess_mime_type(file))
 
         orig_generate = genai.models.AsyncModels.generate_content
+        openai_fallback_models = _GLMAsyncModels(
+            settings=type(
+                "_GeminiOpenAIFallbackSettings",
+                (),
+                {
+                    "GLM_BASE_URL": settings.GEMINI_BASE_URL,
+                    "GLM_API_KEY": settings.GEMINI_API_KEY,
+                    "GLM_REQUEST_TIMEOUT_SECONDS": getattr(
+                        settings, "GLM_REQUEST_TIMEOUT_SECONDS", 50.0
+                    ),
+                },
+            )(),
+            storage={},
+        )
 
         async def patched_generate(self_models, model, contents, **kwargs):
             normalized = _ensure_list(contents)
@@ -1409,7 +1434,27 @@ def apply_gemini_patch(settings: Any):
                             data=file_cache[file_uri], mime_type=_guess_mime_type(file_uri)
                         )
 
-            return await orig_generate(self_models, model=model, contents=normalized, **kwargs)
+            try:
+                return await orig_generate(
+                    self_models, model=model, contents=normalized, **kwargs
+                )
+            except Exception as err:
+                status_code = getattr(err, "code", None) or getattr(err, "status_code", None)
+                if settings.GEMINI_BASE_URL and (
+                    status_code == 404 or "404 Not Found" in str(err)
+                ):
+                    fallback_endpoint = _resolve_openai_compatible_endpoint(
+                        settings.GEMINI_BASE_URL
+                    )
+                    logger.warning(
+                        "Gemini native endpoint returned 404; falling back to OpenAI-compatible "
+                        "endpoint | endpoint={}",
+                        fallback_endpoint,
+                    )
+                    return await openai_fallback_models.generate_content(
+                        model=model, contents=normalized, **kwargs
+                    )
+                raise
 
         genai.files.AsyncFiles.upload = patched_upload
         genai.models.AsyncModels.generate_content = patched_generate

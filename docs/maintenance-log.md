@@ -1433,7 +1433,7 @@
   - `tests/test_glm_adapter.py`
   - `docs/maintenance-log.md`
 - 处理结果：
-  - `_resolve_gemini_base_url` 仅在 `aihubmix.com` 域名下自动追加 `/gemini`，对其他自定义中转地址保留原路径并自动剥离末尾多余的 `/v1` 或 `/v1beta`。
+  - `_resolve_gemini_base_url` 仅在 `aihubmix.com` 域名下自动追加 `/gemini`，对其他自定义中转地址保留原路径并自动剥离末尾多余的 `/v1` 或 `/v1beta`；当自定义 `GEMINI_BASE_URL` 的原生 `/v1beta/models/...` 接口返回 404 时，自动回退到 OpenAI 兼容的 `/v1/chat/completions` 接口。
   - `_resolve_openai_compatible_endpoint` 对无路径前缀的 `GLM_BASE_URL` 自动补全 `/v1/chat/completions`，保留智谱官方 `/api/paas/v4/chat/completions` 行为不变；网络层 `httpx.RequestError` 增加详细错误原因日志。
   - GitHub Actions 工作流支持优先从 `vars.GEMINI_BASE_URL` 和 `vars.GLM_BASE_URL` 读取中转地址，并回退兼容 `secrets`。
   - 强化 `GLM_COMPLEX_DRAG_INSTRUCTION` 要求每个坐标点必须为 `{"x": int, "y": int}` 对象，增加损坏引号拖拽坐标的文本恢复逻辑。
