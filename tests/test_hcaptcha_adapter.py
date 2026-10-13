@@ -8,14 +8,17 @@ from hcaptcha_challenger.models import PointCoordinate, SpatialPath
 import extensions.hcaptcha_adapter as hcaptcha_adapter
 from extensions.numbered_line_solver import NumberedDragSolution
 from extensions.hcaptcha_adapter import (
+    _build_point_retry_prompt,
     _correct_drag_source_points,
     _decode_entity_contour,
     _detect_clickable_grid_bounds,
     _detect_task_canvas_origin,
+    _filter_safe_points,
     _is_line_completion_question,
     _match_outline_contours,
     _point_answer_validation_error,
     _queue_empty_checkcaptcha_response,
+    _safe_fallback_point,
     _select_line_gap_markers,
 )
 
@@ -272,5 +275,49 @@ def test_nonempty_checkcaptcha_response_cancels_pending_failure():
         return agent._captcha_response_queue.empty()
 
     assert asyncio.run(scenario()) is True
-    _detect_clickable_grid_bounds,
-    _point_answer_validation_error,
+
+
+def test_filter_safe_points_filters_unsafe_and_preserves_valid():
+    challenge_bbox = {"x": 390, "y": 100, "width": 500, "height": 470}
+    clickable_bounds = (560, 230, 880, 560)
+
+    points = [
+        SimpleNamespace(x=836, y=809),
+        SimpleNamespace(x=426, y=300),
+        SimpleNamespace(x=700, y=400),
+    ]
+
+    safe = _filter_safe_points(
+        points, challenge_bbox=challenge_bbox, clickable_bounds=clickable_bounds
+    )
+    assert len(safe) == 1
+    assert safe[0].x == 700 and safe[0].y == 400
+
+
+def test_safe_fallback_point_returns_center():
+    challenge_bbox = {"x": 390, "y": 100, "width": 500, "height": 470}
+    clickable_bounds = (560, 230, 880, 560)
+
+    fallback_grid = _safe_fallback_point(
+        challenge_bbox=challenge_bbox, clickable_bounds=clickable_bounds
+    )
+    assert fallback_grid == (720.0, 395.0)
+
+    fallback_box = _safe_fallback_point(
+        challenge_bbox=challenge_bbox, clickable_bounds=None
+    )
+    assert fallback_box == (640.0, 335.0)
+
+
+def test_build_point_retry_prompt_includes_error_and_bounds():
+    challenge_bbox = {"x": 390, "y": 100, "width": 500, "height": 470}
+    retry_prompt = _build_point_retry_prompt(
+        "Please click the dogs",
+        validation_error="point (410.0, 640.0) is outside challenge bounds",
+        challenge_bbox=challenge_bbox,
+        clickable_bounds=None,
+    )
+
+    assert "Please click the dogs" in retry_prompt
+    assert "point (410.0, 640.0) is outside challenge bounds" in retry_prompt
+    assert "x=390..890, y=100..570" in retry_prompt

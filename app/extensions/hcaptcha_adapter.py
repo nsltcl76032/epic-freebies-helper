@@ -172,6 +172,51 @@ def _point_inside_bounds(
     return x_min <= x <= x_max and y_min <= y <= y_max
 
 
+def _filter_safe_points(
+    points: list[Any],
+    *,
+    challenge_bbox: dict[str, float] | None,
+    clickable_bounds: tuple[float, float, float, float] | None,
+) -> list[Any]:
+    if not points:
+        return []
+    if challenge_bbox is None:
+        return list(points)
+
+    challenge_bounds = (
+        float(challenge_bbox["x"]),
+        float(challenge_bbox["y"]),
+        float(challenge_bbox["x"]) + float(challenge_bbox["width"]),
+        float(challenge_bbox["y"]) + float(challenge_bbox["height"]),
+    )
+    safe: list[Any] = []
+    for point in points:
+        coordinates = float(point.x), float(point.y)
+        if not _point_inside_bounds(coordinates, challenge_bounds):
+            continue
+        if clickable_bounds is not None and not _point_inside_bounds(coordinates, clickable_bounds):
+            continue
+        safe.append(point)
+    return safe
+
+
+def _safe_fallback_point(
+    *,
+    challenge_bbox: dict[str, float] | None,
+    clickable_bounds: tuple[float, float, float, float] | None,
+) -> tuple[float, float] | None:
+    if clickable_bounds is not None:
+        x_min, y_min, x_max, y_max = clickable_bounds
+        return (x_min + x_max) / 2.0, (y_min + y_max) / 2.0
+    if challenge_bbox is not None:
+        x_min = float(challenge_bbox["x"])
+        y_min = float(challenge_bbox["y"])
+        width = float(challenge_bbox["width"])
+        height = float(challenge_bbox["height"])
+        return x_min + width / 2.0, y_min + height / 2.0
+    return None
+
+
 def _build_point_prompt(
     user_prompt: str,
     *,
@@ -184,7 +229,9 @@ def _build_point_prompt(
             "The clickable tile grid is within page coordinates "
             f"x={x_min:.0f}..{x_max:.0f}, y={y_min:.0f}..{y_max:.0f}. "
             "Every returned point must be inside this grid. Repeated count badges and example "
-            "animals outside the grid are references only, regardless of which side they occupy."
+            "animals outside the grid are references only, regardless of which side they occupy. "
+            f"Never output coordinates with x < {x_min:.0f}, x > {x_max:.0f}, "
+            f"y < {y_min:.0f}, or y > {y_max:.0f}."
         )
     elif challenge_bbox is not None:
         x_min = float(challenge_bbox["x"])
@@ -193,11 +240,46 @@ def _build_point_prompt(
         y_max = y_min + float(challenge_bbox["height"])
         constraint = (
             "Every returned point must be inside the visible challenge bounds "
-            f"x={x_min:.0f}..{x_max:.0f}, y={y_min:.0f}..{y_max:.0f}."
+            f"x={x_min:.0f}..{x_max:.0f}, y={y_min:.0f}..{y_max:.0f}. "
+            f"Never output coordinates with x < {x_min:.0f}, x > {x_max:.0f}, "
+            f"y < {y_min:.0f}, or y > {y_max:.0f}."
         )
     else:
         return user_prompt
     return f"{user_prompt}\n\n{constraint}"
+
+
+def _build_point_retry_prompt(
+    user_prompt: str,
+    *,
+    validation_error: str,
+    challenge_bbox: dict[str, float] | None,
+    clickable_bounds: tuple[float, float, float, float] | None,
+) -> str:
+    target_bounds = clickable_bounds
+    if target_bounds is None and challenge_bbox is not None:
+        target_bounds = (
+            float(challenge_bbox["x"]),
+            float(challenge_bbox["y"]),
+            float(challenge_bbox["x"]) + float(challenge_bbox["width"]),
+            float(challenge_bbox["y"]) + float(challenge_bbox["height"]),
+        )
+
+    if target_bounds is not None:
+        x_min, y_min, x_max, y_max = target_bounds
+        bounds_constraint = (
+            f"You MUST select points strictly inside x={x_min:.0f}..{x_max:.0f}, y={y_min:.0f}..{y_max:.0f}. "
+            f"Never return coordinates with x < {x_min:.0f}, x > {x_max:.0f}, "
+            f"y < {y_min:.0f}, or y > {y_max:.0f}."
+        )
+    else:
+        bounds_constraint = "You must select points strictly inside the visible challenge bounds."
+
+    return (
+        f"{user_prompt}\n\n"
+        f"PREVIOUS ANSWER REJECTED: {validation_error}\n"
+        f"{bounds_constraint}"
+    )
 
 
 def _is_count_selection_question(question: str) -> bool:
@@ -689,12 +771,22 @@ def apply_hcaptcha_drag_patch() -> None:
 
             for cid in range(crumb_count):
                 await self.page.wait_for_timeout(self.config.WAIT_FOR_CHALLENGE_VIEW_TO_RENDER_MS)
+                challenge_view = frame_challenge.locator("//div[@class='challenge-view']")
+                if cid > 0:
+                    try:
+                        if not await challenge_view.is_visible():
+                            logger.debug(
+                                "hCaptcha challenge-view closed before crumb {}/{}; stopping crumb loop",
+                                cid + 1,
+                                crumb_count,
+                            )
+                            break
+                    except Exception:
+                        break
                 raw, projection = await self._capture_spatial_mapping(
                     frame_challenge, cache_key, cid
                 )
-                challenge_bbox = await frame_challenge.locator(
-                    "//div[@class='challenge-view']"
-                ).bounding_box()
+                challenge_bbox = await challenge_view.bounding_box()
                 base_prompt = self._match_user_prompt(job_type)
                 image_grid_bounds = (
                     _detect_clickable_grid_bounds(raw)
@@ -724,16 +816,82 @@ def apply_hcaptcha_drag_patch() -> None:
                 )
                 if validation_error is not None:
                     logger.warning(
-                        "Rejected unsafe hCaptcha point answer | reason={}", validation_error
+                        "Rejected unsafe hCaptcha point answer | reason={}; "
+                        "retrying with boundary constraint",
+                        validation_error,
                     )
-                    raise ValueError(f"Unsafe hCaptcha point answer: {validation_error}")
+                    retry_prompt = _build_point_retry_prompt(
+                        user_prompt,
+                        validation_error=validation_error,
+                        challenge_bbox=challenge_bbox,
+                        clickable_bounds=clickable_bounds,
+                    )
+                    try:
+                        retry_response = await self._spatial_point_reasoner(
+                            challenge_screenshot=raw,
+                            grid_divisions=projection,
+                            auxiliary_information=retry_prompt,
+                        )
+                        logger.debug(
+                            f'[{cid+1}/{crumb_count}]RetryToolInvokeMessage: {retry_response.log_message}'
+                        )
+                        retry_error = _point_answer_validation_error(
+                            retry_response.points,
+                            challenge_bbox=challenge_bbox,
+                            clickable_bounds=clickable_bounds,
+                        )
+                        if retry_error is None:
+                            response = retry_response
+                            validation_error = None
+                        else:
+                            logger.warning(
+                                "Retry hCaptcha point answer also had boundary issues | reason={}",
+                                retry_error,
+                            )
+                            if _filter_safe_points(
+                                retry_response.points,
+                                challenge_bbox=challenge_bbox,
+                                clickable_bounds=clickable_bounds,
+                            ):
+                                response = retry_response
+                                validation_error = retry_error
+                    except Exception as err:
+                        logger.warning("Retry spatial point reasoning failed: {!r}", err)
+
+                safe_points = _filter_safe_points(
+                    response.points,
+                    challenge_bbox=challenge_bbox,
+                    clickable_bounds=clickable_bounds,
+                )
+                if len(safe_points) < len(response.points):
+                    logger.warning(
+                        "Filtered out {} unsafe hCaptcha point(s) out of {}",
+                        len(response.points) - len(safe_points),
+                        len(response.points),
+                    )
 
                 self._spatial_point_reasoner.cache_response(
                     path=cache_key.joinpath(f"{cache_key.name}_{cid}_model_answer.json")
                 )
-                for point in response.points:
-                    await self.page.mouse.click(point.x, point.y, delay=180)
-                    await self.page.wait_for_timeout(500)
+
+                if safe_points:
+                    for point in safe_points:
+                        await self.page.mouse.click(point.x, point.y, delay=180)
+                        await self.page.wait_for_timeout(500)
+                else:
+                    fallback = _safe_fallback_point(
+                        challenge_bbox=challenge_bbox, clickable_bounds=clickable_bounds
+                    )
+                    if fallback is not None:
+                        center_x, center_y = fallback
+                        logger.warning(
+                            "No safe points remained; clicking safe fallback point "
+                            "({:.1f}, {:.1f}) to trigger challenge flow",
+                            center_x,
+                            center_y,
+                        )
+                        await self.page.mouse.click(center_x, center_y, delay=180)
+                        await self.page.wait_for_timeout(500)
 
                 with suppress(PlaywrightTimeoutError):
                     submit_btn = frame_challenge.locator("//div[@class='button-submit button']")
@@ -755,10 +913,20 @@ def apply_hcaptcha_drag_patch() -> None:
 
         for cid in range(crumb_count):
             await self.page.wait_for_timeout(self.config.WAIT_FOR_CHALLENGE_VIEW_TO_RENDER_MS)
+            challenge_view = frame_challenge.locator("//div[@class='challenge-view']")
+            if cid > 0:
+                try:
+                    if not await challenge_view.is_visible():
+                        logger.debug(
+                            "hCaptcha challenge-view closed before crumb {}/{}; stopping crumb loop",
+                            cid + 1,
+                            crumb_count,
+                        )
+                        break
+                except Exception:
+                    break
             raw, projection = await self._capture_spatial_mapping(frame_challenge, cache_key, cid)
-            challenge_bbox = await frame_challenge.locator(
-                "//div[@class='challenge-view']"
-            ).bounding_box()
+            challenge_bbox = await challenge_view.bounding_box()
             user_prompt = self._match_user_prompt(job_type)
             paths = _resolve_line_path(
                 captcha_payload=self.captcha_payload,

@@ -362,7 +362,12 @@ class EpicAuthorization:
         raise PlaywrightTimeoutError("Timed out navigating to Epic claim page")
 
     async def _await_login_outcome(
-        self, point_url: str, agent: AgentV, timeout_seconds: int = 300
+        self,
+        point_url: str,
+        agent: AgentV,
+        timeout_seconds: int = 300,
+        *,
+        initial_challenge_solved: bool = False,
     ) -> None:
         started_at = time.monotonic()
         deadline = started_at + timeout_seconds
@@ -371,6 +376,9 @@ class EpicAuthorization:
         max_totp_attempts = 6
         max_invalid_totp_rejections = 3
         captcha_totp_refresh_cooldown = 8.0
+        pending_login_resubmit = initial_challenge_solved
+        left_login_page_at: float | None = None
+        account_probe_attempted = False
 
         def extend_deadline(reason: str, seconds: int = 120) -> None:
             nonlocal deadline
@@ -448,6 +456,26 @@ class EpicAuthorization:
                     logger.debug(
                         "Another login captcha is visible after MFA captcha; continuing captcha handling"
                     )
+                    return True
+
+                await self.page.wait_for_timeout(500)
+
+            return False
+
+        async def wait_for_login_captcha_settle(seconds: int = 5) -> bool:
+            settle_deadline = time.monotonic() + seconds
+            while time.monotonic() < settle_deadline:
+                if (
+                    not self._is_login_success_signal.empty()
+                    or not self._login_error_signal.empty()
+                    or not self._is_refresh_csrf_signal.empty()
+                ):
+                    return True
+
+                if "/id/login" not in self.page.url or self._is_mfa_page():
+                    return True
+
+                if await self._has_visible_hcaptcha():
                     return True
 
                 await self.page.wait_for_timeout(500)
@@ -552,7 +580,8 @@ class EpicAuthorization:
                             "Epic MFA response"
                         )
                 elif challenge_solved and "/id/login" in self.page.url:
-                    if await wait_for_mfa_captcha_settle(seconds=5):
+                    pending_login_resubmit = False
+                    if await wait_for_login_captcha_settle(seconds=5):
                         await self.page.wait_for_timeout(500)
                         continue
 
@@ -566,13 +595,37 @@ class EpicAuthorization:
                 await self.page.wait_for_timeout(500)
                 continue
 
+            if pending_login_resubmit and "/id/login" in self.page.url and not self._is_mfa_page():
+                pending_login_resubmit = False
+                if await wait_for_login_captcha_settle(seconds=5):
+                    await self.page.wait_for_timeout(500)
+                    continue
+
+                if await self._resubmit_password_form():
+                    logger.warning(
+                        "Login captcha finished while Epic is still on the login page; "
+                        "resubmitted the password form"
+                    )
+                    extend_deadline("password-resubmit", 60)
+                    continue
+
             if self._is_mfa_page() and self._totp_attempts == 0:
                 await submit_fresh_totp("mfa_page")
                 continue
 
             if not self._is_mfa_page() and "/id/login" not in self.page.url:
+                if left_login_page_at is None:
+                    left_login_page_at = time.monotonic()
+                if not self._is_refresh_csrf_signal.empty():
+                    return
                 if "true" == await self._get_login_status(timeout_ms=500, warn_timeout=False):
                     return
+                if not account_probe_attempted and time.monotonic() - left_login_page_at >= 6:
+                    account_probe_attempted = True
+                    if await self._has_account_session():
+                        return
+            else:
+                left_login_page_at = None
 
             await self.page.wait_for_timeout(500)
 
@@ -587,16 +640,27 @@ class EpicAuthorization:
 
     async def _resubmit_password_form(self) -> bool:
         password_input = self.page.locator("#password")
-        sign_in_button = self.page.locator("#sign-in")
 
         try:
-            await password_input.wait_for(state="visible", timeout=1000)
-            await sign_in_button.wait_for(state="visible", timeout=1000)
+            await password_input.wait_for(state="visible", timeout=3000)
 
             if not await password_input.input_value(timeout=1000):
                 await password_input.fill(settings.EPIC_PASSWORD.get_secret_value())
 
-            await sign_in_button.click(timeout=5000, no_wait_after=True)
+            submitted = False
+            for selector in ("#sign-in", "button[type='submit']", "#continue"):
+                button = self.page.locator(selector).first
+                try:
+                    await button.wait_for(state="visible", timeout=1500)
+                    await button.click(timeout=5000, no_wait_after=True)
+                    submitted = True
+                    break
+                except PlaywrightTimeoutError:
+                    continue
+
+            if not submitted:
+                await password_input.press("Enter")
+
             await self.page.wait_for_timeout(1000)
             return True
         except PlaywrightTimeoutError:
@@ -772,7 +836,12 @@ class EpicAuthorization:
                     pass
 
                 try:
-                    await self._await_login_outcome(point_url, agent, timeout_seconds=25)
+                    await self._await_login_outcome(
+                        point_url,
+                        agent,
+                        timeout_seconds=25,
+                        initial_challenge_solved=(challenge_signal is ChallengeSignal.SUCCESS),
+                    )
                     login_confirmed = True
                     break
                 except PlaywrightTimeoutError:
