@@ -25,7 +25,22 @@ CHALLENGE_PROMPT_ALIASES = (
     "requester_question",
 )
 
-POINTS_ALIASES = ("points", "point", "coordinates", "Coordinates")
+POINTS_ALIASES = (
+    "points",
+    "point",
+    "coordinates",
+    "Coordinates",
+    "coordinate",
+    "Coordinate",
+    "positions",
+    "position",
+    "targets",
+    "target",
+    "answers",
+    "selected_points",
+    "clicks",
+    "click_points",
+)
 
 PATHS_ALIASES = ("paths", "path", "coordinates", "Coordinates")
 
@@ -979,6 +994,16 @@ def _coerce_payload_for_schema(payload: dict[str, Any], schema: Any, text: str) 
             )
             if points_payload:
                 return points_payload
+
+        for key, val in payload.items():
+            if key != "points" and isinstance(val, list) and val:
+                extracted = _extract_points_from_value(val)
+                if extracted:
+                    return _build_points_payload(
+                        extracted,
+                        challenge_prompt=challenge_prompt,
+                        inferred_rule=inferred_rule,
+                    )
 
         if "points" in payload:
             payload.setdefault("challenge_prompt", challenge_prompt)

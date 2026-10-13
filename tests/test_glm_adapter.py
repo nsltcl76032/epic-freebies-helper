@@ -363,3 +363,12 @@ def test_gemini_base_url_only_appends_gemini_prefix_for_aihubmix():
         _resolve_gemini_base_url("https://dns.19950331.xyz:11661/v1beta")
         == "https://dns.19950331.xyz:11661"
     )
+
+
+def test_area_select_arbitrary_points_key_is_coerced_to_points():
+    text = '{"challenge_prompt":"","selected_points":[{"x": 755, "y": 505}]}'
+    payload = _coerce_payload_for_schema(
+        _normalize_glm_payload(_extract_json_payload(text)), ImageAreaSelectChallenge, text
+    )
+    challenge = ImageAreaSelectChallenge(**payload)
+    assert [point.model_dump() for point in challenge.points] == [{"x": 755, "y": 505}]

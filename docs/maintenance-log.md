@@ -1439,23 +1439,28 @@
   - 强化 `GLM_COMPLEX_DRAG_INSTRUCTION` 要求每个坐标点必须为 `{"x": int, "y": int}` 对象，增加损坏引号拖拽坐标的文本恢复逻辑。
   - 在 `patched_challenge_image_label_select` 与 `patched_challenge_image_drag_drop` 中增加 `frame_challenge is None` 空指针早退保护；在 `_submit_login_or_accept_challenge` 与 `_await_login_outcome` 中完善验证码替换按钮检测及 `/id/login` 页验证码通过后的密码表单补交。
 
-### 2026-10-13 修复 hCaptcha 点选越界异常中断求解、单轮挑战视图残留等待及登录验证码通过后结果确认
+### 2026-10-13 修复 hCaptcha 点选越界异常中断求解、已验证复选框死循环与点选别名校验
 
 - 现象：
-  - 登录阶段触发 `image_label_multi_select` 挑战时，LLM 偶发返回超出挑战框边界的坐标（如 `(410.0, 640.0)`、`(305.0, 465.0)`、`(367.0, 520.0)`），`patched_challenge_image_label_select` 直接抛出 `ValueError('Unsafe hCaptcha point answer: ...')`，导致 `_solve_captcha` 异常终止，挑战未点击提交且队列未收到响应。
+  - 登录阶段触发 `image_label_multi_select` 挑战时，LLM 偶发返回超出挑战框边界的坐标（如 `(410.0, 640.0)`、`(305.0, 465.0)`、`(367.0, 520.0)`、`(395.0, 730.0)`），`patched_challenge_image_label_select` 直接抛出 `ValueError('Unsafe hCaptcha point answer: ...')`，导致 `_solve_captcha` 异常终止，挑战未点击提交且队列未收到响应。
+  - 在第 1 次认证尝试中，hCaptcha 连续求解成功（`context=login_mfa | signal=success`），但随后反复打印 `Login captcha is visible during authentication outcome` 并不断触发新的验证码，最终在第 4 轮求解中因超出 `max_deadline=180s` 触发 `timeout=52s TimeoutError`；在另一次尝试中，模型返回了未覆盖的点选别名字段导致 `1 validation error for ImageAreaSelectChallenge points Field required`。
   - 当挑战 `count=None`（单轮题回退为 `MAX_CRUMB_COUNT=2`）或首轮提交后挑战框已关闭时，第 2 轮仍继续调用 `_capture_spatial_mapping` 截图 `//div[@class='challenge-view']`，引发 `Locator.screenshot: Timeout 30000ms exceeded` 重试耗时 60s 直至挑战超时。
-  - 第 4、5 次认证尝试中 hCaptcha 求解已返回 `signal=success`，但随后在 `_await_login_outcome` 中等待超时（`TimeoutError('Timed out waiting for Epic login outcome')`）。
 - 根因判断：
   - 原越界防护采用抛出 `ValueError` 的强断言机制，中断了 `hcaptcha-challenger` 的提交流程与响应队列生命周期。
+  - `_has_visible_hcaptcha` 原先仅检查页面是否存在任何可见的 hCaptcha iframe；即使复选框已显示绿勾完成（`aria-checked="true"`），依然误判为“有待解验证码”，导致每次补交表单后立刻对已验证的复选框重新拉起 `wait_for_challenge()` 陷入死循环。
+  - 点选响应归一化别名列表未覆盖 `selected_points` / `coordinate` 等变体，且 `_await_login_outcome` 硬编码的 180 秒上限在多轮挑战场景下易被提前截断。
   - 多轮 crumb 循环未在第 2 轮及后续轮次截图前检查 `challenge-view` 是否仍然可见。
-  - `_await_login_outcome` 在 `/id/login` 页面误复用了仅面向 `/id/login/mfa` 的 `wait_for_mfa_captcha_settle`（因 `not self._is_mfa_page()` 立即返回 `True` 而跳过密码表单补交），且未接收首轮 `_login` 已完成验证码的信号，同时在已跳转离开 `/id/login` 但 `//egs-navigation` 未渲染时缺少 `_is_refresh_csrf_signal` 与 `_has_account_session()` 会话探针兜底。
 - 改动文件：
   - `app/extensions/hcaptcha_adapter.py`
+  - `app/extensions/llm_adapter.py`
   - `app/services/epic_authorization_service.py`
   - `tests/test_hcaptcha_adapter.py`
+  - `tests/test_glm_adapter.py`
   - `docs/maintenance-log.md`
 - 处理结果：
   - 在 `_build_point_prompt` 中补充显式的 x/y 边界约束；当点选越界时记录警告并通过 `_build_point_retry_prompt` 触发单次模型重试，再用 `_filter_safe_points` 过滤越界坐标，全部越界时点击 `_safe_fallback_point` 挑战框中心安全点并正常提交，不再抛出 `ValueError` 中断求解。
+  - 重构 `_has_visible_hcaptcha`：明确区分弹窗挑战框与复选框；若仅存在已通过复选框（`aria-checked="true"`）且无弹窗挑战时，判定为验证码已平息，彻底打破无限触发验证码的死循环。
+  - 扩充 `POINTS_ALIASES` 并支持自动探测提取字典中的点坐标列表，防止 Pydantic 报错 `points Field required`；将 `_await_login_outcome` 的 `max_deadline` 上限放宽至 400s 并增加剩余时间过短时的保护。
   - 在 `patched_challenge_image_label_select` 与 `patched_challenge_image_drag_drop` 的 `cid > 0` 轮次截图前检查 `challenge-view` 可见性，若挑战已关闭则立即结束循环。
-  - 在 `_await_login_outcome` 中新增面向 `/id/login` 的 `wait_for_login_captcha_settle`，支持接收 `_login` 首轮 `initial_challenge_solved` 状态并在仍停留 `/id/login` 时补交密码表单；`_resubmit_password_form` 增加 `#sign-in` / `button[type='submit']` / `#continue` / `Enter` 多级提交回退；离开 `/id/login` 后支持通过 `_is_refresh_csrf_signal` 和 `_has_account_session()` 订单接口确认登录态。
-  - 新增 `_filter_safe_points`、`_safe_fallback_point` 与 `_build_point_retry_prompt` 的回归测试用例。
+  - 在 `_await_login_outcome` 中新增面向 `/id/login` 的平息等待并在挑战成功后重置 `challenge_solved` 状态，补交表单支持多级回退；离开 `/id/login` 后支持通过 `_is_refresh_csrf_signal` 和 `_has_account_session()` 订单接口确认登录态。
+  - 新增安全点过滤、中心安全回退点、重试提示词及任意键名点选坐标归一化的回归测试用例。

@@ -270,35 +270,61 @@ class EpicAuthorization:
         )
 
     async def _has_visible_hcaptcha(self) -> bool:
-        for frame in self.page.frames:
-            if "hcaptcha" in (frame.url or "").lower():
-                with suppress(Exception):
-                    frame_element = await frame.frame_element()
-                    visible = await frame_element.evaluate(
-                        """
-                        (element) => {
-                          const rect = element.getBoundingClientRect();
-                          const style = window.getComputedStyle(element);
-                          return rect.width > 0 && rect.height > 0 &&
-                            style.visibility !== 'hidden' &&
-                            style.display !== 'none' &&
-                            style.opacity !== '0';
-                        }
-                        """
-                    )
-                    if visible:
-                        return True
+        has_challenge_popup = False
+        has_unresolved_checkbox = False
 
-        body = (await self._page_body_text()).lower()
-        return any(
-            marker in body
-            for marker in (
-                "one more step",
-                "please complete a security check",
-                "verify you are human",
-                "i am human",
-            )
-        )
+        for frame in self.page.frames:
+            frame_url = (frame.url or "").lower()
+            if "hcaptcha" not in frame_url:
+                continue
+
+            with suppress(Exception):
+                frame_element = await frame.frame_element()
+                box = await frame_element.evaluate(
+                    """
+                    (element) => {
+                      const rect = element.getBoundingClientRect();
+                      const style = window.getComputedStyle(element);
+                      return {
+                        visible: rect.width > 0 && rect.height > 0 &&
+                          style.visibility !== 'hidden' &&
+                          style.display !== 'none' &&
+                          style.opacity !== '0',
+                        width: rect.width,
+                        height: rect.height
+                      };
+                    }
+                    """
+                )
+                if not isinstance(box, dict) or not box.get("visible"):
+                    continue
+
+                if (
+                    "frame=challenge" in frame_url
+                    or "challenge" in frame_url
+                    or (box.get("width", 0) >= 250 and box.get("height", 0) >= 200)
+                ):
+                    has_challenge_popup = True
+                    break
+
+                checked = await frame.evaluate(
+                    """
+                    () => {
+                      const cb = document.querySelector('#checkbox, [role="checkbox"]');
+                      return cb && cb.getAttribute('aria-checked') === 'true';
+                    }
+                    """
+                )
+                if not checked:
+                    has_unresolved_checkbox = True
+
+        if has_challenge_popup or has_unresolved_checkbox:
+            return True
+
+        if await self._has_pre_login_security_check():
+            return True
+
+        return False
 
     async def _wait_for_login_form(self, point_url: str) -> None:
         deadline = time.monotonic() + 45
@@ -371,7 +397,7 @@ class EpicAuthorization:
     ) -> None:
         started_at = time.monotonic()
         deadline = started_at + timeout_seconds
-        hard_timeout_seconds = max(timeout_seconds, 180)
+        hard_timeout_seconds = max(timeout_seconds, 400)
         max_deadline = started_at + hard_timeout_seconds
         max_totp_attempts = 6
         max_invalid_totp_rejections = 3
@@ -562,6 +588,7 @@ class EpicAuthorization:
                     extend_deadline("captcha-attempt", 90)
 
                 if challenge_solved and self._is_mfa_page():
+                    challenge_solved = False
                     if await wait_for_mfa_captcha_settle():
                         await self.page.wait_for_timeout(500)
                         continue
@@ -580,17 +607,16 @@ class EpicAuthorization:
                             "Epic MFA response"
                         )
                 elif challenge_solved and "/id/login" in self.page.url:
+                    challenge_solved = False
                     pending_login_resubmit = False
-                    if await wait_for_login_captcha_settle(seconds=5):
-                        await self.page.wait_for_timeout(500)
-                        continue
-
-                    if await self._resubmit_password_form():
-                        logger.warning(
-                            "Login captcha finished while Epic is still on the login page; "
-                            "resubmitted the password form"
-                        )
-                        extend_deadline("password-resubmit", 60)
+                    await self.page.wait_for_timeout(1000)
+                    if not self._is_mfa_page() and "/id/login" in self.page.url:
+                        if await self._resubmit_password_form():
+                            logger.warning(
+                                "Login captcha finished while Epic is still on the login page; "
+                                "resubmitted the password form"
+                            )
+                            extend_deadline("password-resubmit", 60)
 
                 await self.page.wait_for_timeout(500)
                 continue
