@@ -262,6 +262,18 @@ def test_drag_src_tgt_aliases_are_converted_to_path():
     ]
 
 
+def test_drag_single_point_is_treated_as_target():
+    payload = {"points": [{"x": 490, "y": 430}]}
+    text = json.dumps(payload)
+
+    coerced = _coerce_payload_for_schema(
+        _normalize_glm_payload(payload), ImageDragDropChallenge, text
+    )
+    challenge = ImageDragDropChallenge(**coerced)
+
+    assert challenge.paths[0].end_point.model_dump() == {"x": 490, "y": 430}
+
+
 def test_drag_scalar_coordinates_are_rejected_before_schema_validation():
     payload = {"paths": [{"start_point": 842, "end_point": 676}]}
 

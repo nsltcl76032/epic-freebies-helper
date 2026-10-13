@@ -940,6 +940,13 @@ def _coerce_payload_for_schema(payload: dict[str, Any], schema: Any, text: str) 
                     challenge_prompt=challenge_prompt,
                     inferred_rule=inferred_rule,
                 )
+            elif isinstance(points_payload, list) and len(points_payload) == 1:
+                normalized_drag = _build_drag_payload(
+                    {"x": 0, "y": 0},
+                    points_payload[0],
+                    challenge_prompt=challenge_prompt,
+                    inferred_rule=inferred_rule,
+                )
 
         if not normalized_drag:
             extracted_drag = _extract_drag_points_from_text(text)
