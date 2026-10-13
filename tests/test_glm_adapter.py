@@ -17,6 +17,8 @@ from extensions.llm_adapter import (
     _extract_json_payload,
     _limit_glm_provider_attempts,
     _normalize_glm_payload,
+    _resolve_gemini_base_url,
+    _resolve_openai_compatible_endpoint,
 )
 
 
@@ -329,3 +331,35 @@ def test_router_plain_text_drag_multi_remains_upstream_enum_value():
     challenge = ChallengeRouterResult(**payload)
 
     assert challenge.challenge_type.value == "image_drag_multi"
+
+
+def test_openai_compatible_endpoint_adds_v1_when_base_url_has_no_path():
+    assert (
+        _resolve_openai_compatible_endpoint("https://dns.19950331.xyz:11661")
+        == "https://dns.19950331.xyz:11661/v1/chat/completions"
+    )
+    assert (
+        _resolve_openai_compatible_endpoint("https://dns.19950331.xyz:11661/v1")
+        == "https://dns.19950331.xyz:11661/v1/chat/completions"
+    )
+    assert (
+        _resolve_openai_compatible_endpoint("https://open.bigmodel.cn/api/paas/v4")
+        == "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+    )
+
+
+def test_gemini_base_url_only_appends_gemini_prefix_for_aihubmix():
+    assert _resolve_gemini_base_url("https://aihubmix.com") == "https://aihubmix.com/gemini"
+    assert _resolve_gemini_base_url("https://aihubmix.com/v1") == "https://aihubmix.com/gemini"
+    assert (
+        _resolve_gemini_base_url("https://dns.19950331.xyz:11661")
+        == "https://dns.19950331.xyz:11661"
+    )
+    assert (
+        _resolve_gemini_base_url("https://dns.19950331.xyz:11661/v1")
+        == "https://dns.19950331.xyz:11661"
+    )
+    assert (
+        _resolve_gemini_base_url("https://dns.19950331.xyz:11661/v1beta")
+        == "https://dns.19950331.xyz:11661"
+    )

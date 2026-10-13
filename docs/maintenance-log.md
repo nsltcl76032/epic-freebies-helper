@@ -1414,3 +1414,27 @@
   - 限流仍先发送包含失败原因的摘要，再返回 `rate_limited` 正常结束；不会把限流记为领取成功，其他领取异常仍保持失败。未改动登录、hCaptcha、浏览器或 checkout 业务逻辑，保留 `master` 的 `70354be` 浏览器修复。
   - 对最新 PR 代码完成静态复审，并核对 WXPush 上游 `/wxsend` 响应协议；Ruff、Black、Python 语法、工作流 YAML 和 `git diff --check` 检查通过。
   - 按仓库规则，本轮未执行测试或真实微信投递。新增文件包含 29 个测试定义，但仍缺少发送异常、双渠道调度及限流返回值的集成回归覆盖；不能将此前浏览器修复的 70 项测试结果视为本 PR 的验证结果。
+
+### 2026-10-13 修复自定义 Gemini/OpenAI 中转地址 404、拖拽坐标提示约束及登录验证码通过后未补交表单
+
+- 现象：
+  - 使用第三方自定义 `GEMINI_BASE_URL`（如自建 NewAPI/OneAPI 网关）时，请求被强制追加 `/gemini` 前缀，导致 `/gemini/v1beta/models/...` 返回 `404 page not found`。
+  - 使用 `GLM_BASE_URL` 填写不带路径前缀的中转根地址（如 `https://host:port`）时，仅拼接 `/chat/completions` 而缺少 `/v1`，且 `.github/workflows/epic-gamer.yml` 未读取 `vars.GLM_BASE_URL` / `vars.GEMINI_BASE_URL`。
+  - 登录阶段触发 `image_drag_multi` 时，模型偶发将 `start_point` / `end_point` 输出为标量数字或损坏引号；此外，当验证码在 `_await_login_outcome` 内通过但页面仍停留在 `/id/login` 时，未主动重新提交密码表单，导致空等超时。
+  - 挑战框在长时间等待后消失时，`patched_challenge_image_drag_drop` 与 `patched_challenge_image_label_select` 未检查 `frame_challenge is None` 即调用 `check_crumb_count()`，触发 `AttributeError: 'NoneType' object has no attribute 'locator'`。
+- 根因判断：
+  - `apply_gemini_patch` 原先假定所有自定义 `GEMINI_BASE_URL` 均为 AiHubMix 风格（需 `/gemini` 前缀），不兼容标准 Gemini 反代地址；OpenAI 兼容端点拼接也未对无路径根地址补全 `/v1`。
+  - 拖拽提示词未显式禁止标量坐标点；登录结果等待循环只处理了 MFA 页的验证码完成恢复，未覆盖普通 `/id/login` 页验证码完成后需补点 `#sign-in` 的情形。
+- 改动文件：
+  - `app/extensions/llm_adapter.py`
+  - `app/extensions/hcaptcha_adapter.py`
+  - `app/services/epic_authorization_service.py`
+  - `.github/workflows/epic-gamer.yml`
+  - `tests/test_glm_adapter.py`
+  - `docs/maintenance-log.md`
+- 处理结果：
+  - `_resolve_gemini_base_url` 仅在 `aihubmix.com` 域名下自动追加 `/gemini`，对其他自定义中转地址保留原路径并自动剥离末尾多余的 `/v1` 或 `/v1beta`。
+  - `_resolve_openai_compatible_endpoint` 对无路径前缀的 `GLM_BASE_URL` 自动补全 `/v1/chat/completions`，保留智谱官方 `/api/paas/v4/chat/completions` 行为不变；网络层 `httpx.RequestError` 增加详细错误原因日志。
+  - GitHub Actions 工作流支持优先从 `vars.GEMINI_BASE_URL` 和 `vars.GLM_BASE_URL` 读取中转地址，并回退兼容 `secrets`。
+  - 强化 `GLM_COMPLEX_DRAG_INSTRUCTION` 要求每个坐标点必须为 `{"x": int, "y": int}` 对象，增加损坏引号拖拽坐标的文本恢复逻辑。
+  - 在 `patched_challenge_image_label_select` 与 `patched_challenge_image_drag_drop` 中增加 `frame_challenge is None` 空指针早退保护；在 `_submit_login_or_accept_challenge` 与 `_await_login_outcome` 中完善验证码替换按钮检测及 `/id/login` 页验证码通过后的密码表单补交。

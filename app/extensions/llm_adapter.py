@@ -7,6 +7,7 @@ import re
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from hcaptcha_challenger.models import ChallengeTypeEnum, RequestType
@@ -74,7 +75,9 @@ GLM_COMPLEX_DRAG_INSTRUCTION = (
     "normally near the midpoint of the numbered 3 and 5 circles, adjusted so both exposed ends "
     "connect. Reject unrelated empty areas outside that corridor. Always use "
     "the center of the movable piece as start_point and the center of its intended outline or "
-    "gap as end_point. Output only the response schema fields challenge_prompt and paths; do not "
+    "gap as end_point. Each start_point and end_point MUST be an object with integer x and y "
+    'coordinates like {"x": 445, "y": 368}; never output a single scalar number for a point. '
+    "Output only the response schema fields challenge_prompt and paths; do not "
     "use aliases such as answer or src."
 )
 
@@ -338,6 +341,64 @@ def _extract_drag_points_from_text(text: str) -> tuple[dict[str, int], dict[str,
         return ({"x": sx, "y": sy}, {"x": tx, "y": ty})
 
     return None
+
+
+def _extract_malformed_drag_paths_from_text(text: str) -> list[dict[str, dict[str, int]]]:
+    stripped = text.strip()
+    if not stripped:
+        return []
+
+    paths: list[dict[str, dict[str, int]]] = []
+    # Recover malformed outputs where the model broke the closing quote before the y coordinate,
+    # e.g. `{"start_point": 829, "end_point": 676, "285)}` or
+    # `{"start_point": 829, "372", "end_point": 497, "471"}`.
+    split_pair_matches = re.findall(
+        r'"start_point"\s*:\s*(\d+)\s*,\s*"(\d+)\)?\s*"?\s*,\s*"end_point"\s*:\s*(\d+)\s*,\s*"(\d+)\)?',
+        stripped,
+    )
+    for sx, sy, tx, ty in split_pair_matches:
+        paths.append(
+            {
+                "start_point": {"x": int(sx), "y": int(sy)},
+                "end_point": {"x": int(tx), "y": int(ty)},
+            }
+        )
+    if paths:
+        return paths
+
+    return []
+
+
+def _resolve_openai_compatible_endpoint(base_url: str) -> str:
+    endpoint = (base_url or "").strip().rstrip("/")
+    if not endpoint:
+        return "/v1/chat/completions"
+    if endpoint.endswith("/chat/completions"):
+        return endpoint
+
+    parsed = urlparse(endpoint)
+    path = parsed.path.rstrip("/")
+    if not path:
+        return f"{endpoint}/v1/chat/completions"
+    return f"{endpoint}/chat/completions"
+
+
+def _resolve_gemini_base_url(raw_base_url: str) -> str:
+    base_url = (raw_base_url or "").strip().rstrip("/")
+    if not base_url:
+        return ""
+    if base_url.endswith("/v1"):
+        base_url = base_url[:-3].rstrip("/")
+    if base_url.endswith("/v1beta"):
+        base_url = base_url[:-7].rstrip("/")
+
+    parsed = urlparse(base_url)
+    host = (parsed.hostname or "").lower()
+    if (host == "aihubmix.com" or host.endswith(".aihubmix.com")) and not base_url.endswith(
+        "/gemini"
+    ):
+        return f"{base_url}/gemini"
+    return base_url
 
 
 def _extract_drag_points_from_value(value: Any) -> tuple[dict[str, int], dict[str, int]] | None:
@@ -875,6 +936,14 @@ def _coerce_payload_for_schema(payload: dict[str, Any], schema: Any, text: str) 
                     inferred_rule=inferred_rule,
                 )
 
+        if not normalized_drag:
+            malformed_paths = _extract_malformed_drag_paths_from_text(text)
+            normalized_paths = _build_drag_paths_payload(
+                malformed_paths, challenge_prompt=challenge_prompt, inferred_rule=inferred_rule
+            )
+            if normalized_paths:
+                return normalized_paths
+
         if normalized_drag:
             return normalized_drag
 
@@ -1227,9 +1296,7 @@ class _GLMAsyncModels:
         if config is None:
             raise ValueError("config is required for GLM compatibility mode")
 
-        endpoint = self._settings.GLM_BASE_URL.rstrip("/")
-        if not endpoint.endswith("/chat/completions"):
-            endpoint = f"{endpoint}/chat/completions"
+        endpoint = _resolve_openai_compatible_endpoint(self._settings.GLM_BASE_URL)
 
         payload = self._build_payload(model=model, contents=contents, config=config, kwargs=kwargs)
         headers = {
@@ -1248,6 +1315,16 @@ class _GLMAsyncModels:
                     f"GLM request timed out after {request_timeout:g} seconds "
                     f"({type(err).__name__})"
                 ) from err
+            except httpx.RequestError as err:
+                cause = type(err.__cause__).__name__ if err.__cause__ else type(err).__name__
+                logger.error(
+                    "GLM network request failed | endpoint={} | error_type={} | cause={} | detail={}",
+                    endpoint,
+                    type(err).__name__,
+                    cause,
+                    str(err) or repr(err),
+                )
+                raise
             if response.is_error:
                 self._log_glm_error(response)
                 response.raise_for_status()
@@ -1299,13 +1376,8 @@ def apply_gemini_patch(settings: Any):
         def new_init(self, *args, **kwargs):
             kwargs["api_key"] = settings.GEMINI_API_KEY.get_secret_value()
 
-            base_url = settings.GEMINI_BASE_URL.rstrip("/")
+            base_url = _resolve_gemini_base_url(settings.GEMINI_BASE_URL)
             if base_url:
-                if base_url.endswith("/v1"):
-                    base_url = base_url[:-3]
-                if not base_url.endswith("/gemini"):
-                    base_url = f"{base_url}/gemini"
-
                 kwargs["http_options"] = types.HttpOptions(base_url=base_url)
                 logger.info(
                     f"🚀 Gemini 兼容补丁已应用 | 模型: {settings.GEMINI_MODEL} | 地址: {base_url}"

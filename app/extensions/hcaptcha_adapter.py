@@ -679,6 +679,11 @@ def apply_hcaptcha_drag_patch() -> None:
 
         async def patched_challenge_image_label_select(self: RoboticArm, job_type: Any):
             frame_challenge = await self.get_challenge_frame_locator()
+            if frame_challenge is None:
+                logger.warning(
+                    "hCaptcha challenge frame is no longer available before label-select solve"
+                )
+                return
             crumb_count = await self.check_crumb_count()
             cache_key = self.config.create_cache_key(self.captcha_payload)
 
@@ -742,6 +747,9 @@ def apply_hcaptcha_drag_patch() -> None:
 
     async def patched_challenge_image_drag_drop(self: RoboticArm, job_type: Any):
         frame_challenge = await self.get_challenge_frame_locator()
+        if frame_challenge is None:
+            logger.warning("hCaptcha challenge frame is no longer available before drag-drop solve")
+            return
         crumb_count = await self.check_crumb_count()
         cache_key = self.config.create_cache_key(self.captcha_payload)
 

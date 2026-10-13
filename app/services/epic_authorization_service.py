@@ -551,6 +551,17 @@ class EpicAuthorization:
                             "Skipping immediate duplicate TOTP refresh after captcha; waiting for "
                             "Epic MFA response"
                         )
+                elif challenge_solved and "/id/login" in self.page.url:
+                    if await wait_for_mfa_captcha_settle(seconds=5):
+                        await self.page.wait_for_timeout(500)
+                        continue
+
+                    if await self._resubmit_password_form():
+                        logger.warning(
+                            "Login captcha finished while Epic is still on the login page; "
+                            "resubmitted the password form"
+                        )
+                        extend_deadline("password-resubmit", 60)
 
                 await self.page.wait_for_timeout(500)
                 continue
@@ -601,16 +612,31 @@ class EpicAuthorization:
             )
             return
 
-        try:
-            await self.page.locator("#sign-in").click(timeout=10000, no_wait_after=True)
-        except PlaywrightTimeoutError:
+        sign_in_button = self.page.locator("#sign-in")
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline:
             if await self._has_visible_hcaptcha():
                 logger.warning(
                     "Login hCaptcha replaced the sign-in button during submission; "
                     "entering solve loop"
                 )
                 return
-            raise
+
+            try:
+                if await sign_in_button.is_visible():
+                    await sign_in_button.click(timeout=3000, no_wait_after=True)
+                    return
+            except PlaywrightTimeoutError:
+                if await self._has_visible_hcaptcha():
+                    logger.warning(
+                        "Login hCaptcha replaced the sign-in button during submission; "
+                        "entering solve loop"
+                    )
+                    return
+
+            await self.page.wait_for_timeout(400)
+
+        await sign_in_button.click(timeout=5000, no_wait_after=True)
 
     async def _get_login_status(
         self, timeout_ms: int = 30000, *, warn_timeout: bool = True
