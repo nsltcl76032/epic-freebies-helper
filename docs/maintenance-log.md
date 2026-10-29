@@ -1462,7 +1462,7 @@
   - 重构 `_has_visible_hcaptcha`：明确区分弹窗挑战框与复选框；若仅存在已通过复选框（`aria-checked="true"`）且无弹窗挑战时，判定为验证码已平息，彻底打破无限触发验证码的死循环。
   - 扩充 `POINTS_ALIASES` 并支持自动探测提取字典中的点坐标列表，防止 Pydantic 报错 `points Field required`；将 `_await_login_outcome` 的 `max_deadline` 上限放宽至 400s 并增加剩余时间过短时的保护。
   - 在 `patched_challenge_image_label_select` 与 `patched_challenge_image_drag_drop` 的 `cid > 0` 轮次截图前检查 `challenge-view` 可见性，若挑战已关闭则立即结束循环。
-  - 在 `_await_login_outcome` 中新增面向 `/id/login` 的平息等待并在挑战成功后重置 `challenge_solved` 状态，补交表单支持多级回退；离开 `/id/login` 后支持通过 `_is_refresh_csrf_signal` 和 `_has_account_session()` 订单接口确认登录态。
+  - 在 `_await_login_outcome` 中移除验证码解题成功后的即时密码表单补交，交由 Epic 前端 hCaptcha 回调自然提交登录请求，避免重复提交作废 Token 导致不断弹出新验证码；密码表单补交仅作为 25s 超时后的无验证码兜底。
   - 在 `_ensure_store_session_ready` 与 `_wait_for_claim_page_login_state` 中移除在初次读取到 `isloggedin="false"` 时过早退出/抛出异常的逻辑，允许页面在 45s 时限内完成会话注水并正常回退至 `_has_account_session()` 订单接口探针验证。
   - 在拖拽题型中支持将模型返回的单一目标点自动归一化为路径，并补充单点拖拽归一化的回归测试用例。
   - 新增安全点过滤、中心安全回退点、重试提示词及任意键名点选坐标归一化的回归测试用例。
