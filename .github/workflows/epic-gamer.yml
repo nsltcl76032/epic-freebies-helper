@@ -12,7 +12,7 @@ env:
 
 jobs:
   epic-gamer:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A single account run can take 15-20 minutes. Multi-account runs are
     # sequential, so scale the timeout with the number of accounts by setting
     # a repository variable JOB_TIMEOUT_MINUTES (Settings -> Secrets and
@@ -56,6 +56,7 @@ jobs:
         run: uv run camoufox fetch
 
       - name: Install Playwright Firefox fallback
+        continue-on-error: true
         run: uv run playwright install firefox
 
       - name: Run Epic Awesome Gamer

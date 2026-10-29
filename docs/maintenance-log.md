@@ -1465,4 +1465,5 @@
   - 在 `_await_login_outcome` 中移除验证码解题成功后的即时密码表单补交，交由 Epic 前端 hCaptcha 回调自然提交登录请求，避免重复提交作废 Token 导致不断弹出新验证码；密码表单补交仅作为 25s 超时后的无验证码兜底。
   - 在 `_ensure_store_session_ready` 与 `_wait_for_claim_page_login_state` 中移除在初次读取到 `isloggedin="false"` 时过早退出/抛出异常的逻辑，允许页面在 45s 时限内完成会话注水并正常回退至 `_has_account_session()` 订单接口探针验证。
   - 在拖拽题型中支持将模型返回的单一目标点自动归一化为路径，并补充单点拖拽归一化的回归测试用例。
+  - 在工作流中将 GitHub Actions 运行环境锁定为稳定长期支持的 `ubuntu-24.04`，并对后备浏览器安装步骤添加 `continue-on-error: true`，规避 `ubuntu-latest` 调度至测试版 `ubuntu26.04-x64` 时因 Playwright 尚不支持导致安装失败。
   - 新增安全点过滤、中心安全回退点、重试提示词及任意键名点选坐标归一化的回归测试用例。
