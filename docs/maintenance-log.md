@@ -1468,6 +1468,20 @@
   - 在工作流中将 GitHub Actions 运行环境锁定为稳定长期支持的 `ubuntu-24.04`，并对后备浏览器安装步骤添加 `continue-on-error: true`，规避 `ubuntu-latest` 调度至测试版 `ubuntu26.04-x64` 时因 Playwright 尚不支持导致安装失败。
   - 新增安全点过滤、中心安全回退点、重试提示词及任意键名点选坐标归一化的回归测试用例。
 
+### 2026-10-30 修复登录验证码解题成功后未触发表单提交导致超时卡死问题
+
+- 现象：
+  - 在 GitHub Actions 运行过程中，hCaptcha 挑战已成功解开并通过官方校验（`Challenge success | signal=success`），但随后流程停滞在 `/id/login` 页面，原地耗尽 120 秒等待预算并抛出 `TimeoutError('Timed out waiting for Epic login outcome')`，导致整个登录流程判负重置。
+- 根因判断：
+  - 当登录表单触发验证码阻挡在 Sign-In 按钮前时，初次登录提交并未实际成功将表单发送至 Epic 服务端。
+  - 验证码解开后，Epic 前端并不会在所有场景下都通过 hCaptcha 回调自动触发表单提交。
+  - `_await_login_outcome` 在处理非 MFA 页面的 `challenge_solved` 信号时，仅重置了标志位而未执行任何补交逻辑，导致页面在无未解验证码、无 MFA、未跳转登录态的空白状态下无限等待直至超时。
+- 改动文件：
+  - `app/services/epic_authorization_service.py`
+  - `docs/maintenance-log.md`
+- 处理结果：
+  - 在 `_await_login_outcome` 的 `challenge_solved` 处理分支中，增加 1500ms 观察窗口以优先响应自然跳转；若页面依然滞留在 `/id/login` 且验证码已平息无未解弹窗，则主动调用 `_resubmit_password_form()` 点击提交或回车补交密码表单，并适度延长超时时限，确保带着有效验证通过状态完成登录。
+
 ### 2026-10-14 增强 hCaptcha 挑战元素消失容错与 GLM 请求网络超时韧性
 
 - 现象：

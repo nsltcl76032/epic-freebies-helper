@@ -582,6 +582,19 @@ class EpicAuthorization:
                         )
                 elif challenge_solved:
                     challenge_solved = False
+                    # 等待前端短暂平息，观察是否由 hCaptcha 回调自动发起登录跳转
+                    await self.page.wait_for_timeout(1500)
+                    if (
+                        "/id/login" in self.page.url
+                        and not self._is_mfa_page()
+                        and not await self._has_visible_hcaptcha()
+                    ):
+                        if await self._resubmit_password_form():
+                            logger.warning(
+                                "Login captcha completed but Epic remained on /id/login without submission; "
+                                "resubmitted the password form"
+                            )
+                            extend_deadline("password-resubmit", 60)
 
                 await self.page.wait_for_timeout(500)
                 continue
