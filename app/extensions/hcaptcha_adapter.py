@@ -760,7 +760,13 @@ def apply_hcaptcha_drag_patch() -> None:
     if not getattr(RoboticArm.challenge_image_label_select, "_epic_point_bounds_patch", False):
 
         async def patched_challenge_image_label_select(self: RoboticArm, job_type: Any):
-            frame_challenge = await self.get_challenge_frame_locator()
+            try:
+                frame_challenge = await self.get_challenge_frame_locator()
+            except Exception as err:
+                logger.warning(
+                    "hCaptcha challenge frame lookup failed before label-select solve: {!r}", err
+                )
+                return
             if frame_challenge is None:
                 logger.warning(
                     "hCaptcha challenge frame is no longer available before label-select solve"
@@ -771,22 +777,36 @@ def apply_hcaptcha_drag_patch() -> None:
 
             for cid in range(crumb_count):
                 await self.page.wait_for_timeout(self.config.WAIT_FOR_CHALLENGE_VIEW_TO_RENDER_MS)
-                challenge_view = frame_challenge.locator("//div[@class='challenge-view']")
-                if cid > 0:
-                    try:
-                        if not await challenge_view.is_visible():
-                            logger.debug(
-                                "hCaptcha challenge-view closed before crumb {}/{}; stopping crumb loop",
-                                cid + 1,
-                                crumb_count,
-                            )
-                            break
-                    except Exception:
+                try:
+                    challenge_view = frame_challenge.locator("//div[@class='challenge-view']")
+                    if not await challenge_view.is_visible():
+                        logger.debug(
+                            "hCaptcha challenge-view not visible at crumb {}/{}; stopping crumb loop",
+                            cid + 1,
+                            crumb_count,
+                        )
                         break
-                raw, projection = await self._capture_spatial_mapping(
-                    frame_challenge, cache_key, cid
-                )
-                challenge_bbox = await challenge_view.bounding_box()
+                except Exception as err:
+                    logger.debug(
+                        "hCaptcha challenge-view error at crumb {}/{}: {!r}; stopping crumb loop",
+                        cid + 1,
+                        crumb_count,
+                        err,
+                    )
+                    break
+                try:
+                    raw, projection = await self._capture_spatial_mapping(
+                        frame_challenge, cache_key, cid
+                    )
+                    challenge_bbox = await challenge_view.bounding_box()
+                except Exception as err:
+                    logger.warning(
+                        "hCaptcha spatial mapping or bbox failed at crumb {}/{}: {!r}",
+                        cid + 1,
+                        crumb_count,
+                        err,
+                    )
+                    break
                 base_prompt = self._match_user_prompt(job_type)
                 image_grid_bounds = (
                     _detect_clickable_grid_bounds(raw)
@@ -893,7 +913,7 @@ def apply_hcaptcha_drag_patch() -> None:
                         await self.page.mouse.click(center_x, center_y, delay=180)
                         await self.page.wait_for_timeout(500)
 
-                with suppress(PlaywrightTimeoutError):
+                with suppress(Exception):
                     submit_btn = frame_challenge.locator("//div[@class='button-submit button']")
                     await self.click_by_mouse(submit_btn)
 
@@ -904,7 +924,13 @@ def apply_hcaptcha_drag_patch() -> None:
         return
 
     async def patched_challenge_image_drag_drop(self: RoboticArm, job_type: Any):
-        frame_challenge = await self.get_challenge_frame_locator()
+        try:
+            frame_challenge = await self.get_challenge_frame_locator()
+        except Exception as err:
+            logger.warning(
+                "hCaptcha challenge frame lookup failed before drag-drop solve: {!r}", err
+            )
+            return
         if frame_challenge is None:
             logger.warning("hCaptcha challenge frame is no longer available before drag-drop solve")
             return
@@ -913,20 +939,34 @@ def apply_hcaptcha_drag_patch() -> None:
 
         for cid in range(crumb_count):
             await self.page.wait_for_timeout(self.config.WAIT_FOR_CHALLENGE_VIEW_TO_RENDER_MS)
-            challenge_view = frame_challenge.locator("//div[@class='challenge-view']")
-            if cid > 0:
-                try:
-                    if not await challenge_view.is_visible():
-                        logger.debug(
-                            "hCaptcha challenge-view closed before crumb {}/{}; stopping crumb loop",
-                            cid + 1,
-                            crumb_count,
-                        )
-                        break
-                except Exception:
+            try:
+                challenge_view = frame_challenge.locator("//div[@class='challenge-view']")
+                if not await challenge_view.is_visible():
+                    logger.debug(
+                        "hCaptcha challenge-view not visible at crumb {}/{}; stopping crumb loop",
+                        cid + 1,
+                        crumb_count,
+                    )
                     break
-            raw, projection = await self._capture_spatial_mapping(frame_challenge, cache_key, cid)
-            challenge_bbox = await challenge_view.bounding_box()
+            except Exception as err:
+                logger.debug(
+                    "hCaptcha challenge-view error at crumb {}/{}: {!r}; stopping crumb loop",
+                    cid + 1,
+                    crumb_count,
+                    err,
+                )
+                break
+            try:
+                raw, projection = await self._capture_spatial_mapping(frame_challenge, cache_key, cid)
+                challenge_bbox = await challenge_view.bounding_box()
+            except Exception as err:
+                logger.warning(
+                    "hCaptcha spatial mapping or bbox failed at crumb {}/{}: {!r}",
+                    cid + 1,
+                    crumb_count,
+                    err,
+                )
+                break
             user_prompt = self._match_user_prompt(job_type)
             paths = _resolve_line_path(
                 captcha_payload=self.captcha_payload,
@@ -970,7 +1010,7 @@ def apply_hcaptcha_drag_patch() -> None:
             for path in paths:
                 await self._perform_drag_drop(path)
 
-            with suppress(PlaywrightTimeoutError):
+            with suppress(Exception):
                 submit_btn = frame_challenge.locator("//div[@class='button-submit button']")
                 await self.click_by_mouse(submit_btn)
 

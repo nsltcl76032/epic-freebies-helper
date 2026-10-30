@@ -1348,12 +1348,20 @@ class _GLMAsyncModels:
         }
 
         request_timeout = float(self._settings.GLM_REQUEST_TIMEOUT_SECONDS)
+        connect_timeout = min(15.0, request_timeout)
         async with httpx.AsyncClient(
-            timeout=httpx.Timeout(request_timeout, connect=min(30.0, request_timeout))
+            timeout=httpx.Timeout(request_timeout, connect=connect_timeout)
         ) as client:
             try:
                 response = await client.post(endpoint, headers=headers, json=payload)
             except httpx.TimeoutException as err:
+                logger.warning(
+                    "GLM request timed out | endpoint={} | timeout={}s (connect={}s) | err_type={}",
+                    endpoint,
+                    request_timeout,
+                    connect_timeout,
+                    type(err).__name__,
+                )
                 raise TimeoutError(
                     f"GLM request timed out after {request_timeout:g} seconds "
                     f"({type(err).__name__})"

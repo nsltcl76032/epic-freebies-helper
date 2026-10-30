@@ -1467,3 +1467,22 @@
   - 在拖拽题型中支持将模型返回的单一目标点自动归一化为路径，并补充单点拖拽归一化的回归测试用例。
   - 在工作流中将 GitHub Actions 运行环境锁定为稳定长期支持的 `ubuntu-24.04`，并对后备浏览器安装步骤添加 `continue-on-error: true`，规避 `ubuntu-latest` 调度至测试版 `ubuntu26.04-x64` 时因 Playwright 尚不支持导致安装失败。
   - 新增安全点过滤、中心安全回退点、重试提示词及任意键名点选坐标归一化的回归测试用例。
+
+### 2026-10-14 增强 hCaptcha 挑战元素消失容错与 GLM 请求网络超时韧性
+
+- 现象：
+  - 在 GitHub Actions 运行过程中，hCaptcha 挑战中途关闭或网络抖动时，日志中出现 `ValueError('Element is not visible or does not exist')` 与 `AttributeError("'NoneType' object has no attribute 'locator'")` 抛出并中断等待流程。
+  - 使用外部自定义中转站或 GLM 接口时，偶发遭遇 50 秒网络等待超时 (`ConnectTimeout` / `ReadTimeout`)，触发 Tenacity 连续重试耗尽，单次模型调用消耗过多预算并导致外层流程超时。
+- 根因判断：
+  - 上游 `RoboticArm.get_challenge_frame_locator` 或 `click_by_mouse` 在挑战框被 DOM 销毁或页面跳转关闭时，定位不到元素会抛出 `ValueError('Element is not visible or does not exist')`。补丁中虽有 None 检查，但未包裹该调用的异常保护，且内部 locator/click 步骤也可能在关闭瞬间抛出异常。
+  - `wait_for_challenge_signal` 捕获到所有异常后均原样向外抛出，导致调用方未将其归类为可重试或已失效的验证码失败信号。
+  - `GLMAsyncModels` 的连接超时时间原先设置为 30 秒，与总超时 50 秒相比偏长，在网络不可达或中转站无响应时等待时间过长。
+- 改动文件：
+  - `app/extensions/hcaptcha_adapter.py`
+  - `app/extensions/hcaptcha_runtime.py`
+  - `app/extensions/llm_adapter.py`
+  - `docs/maintenance-log.md`
+- 处理结果：
+  - 在 `patched_challenge_image_label_select` 与 `patched_challenge_image_drag_drop` 中为 `get_challenge_frame_locator()` 及后续元素操作补充 try-except 保护，并在提交按钮点击处忽略元素丢失异常，防止挑战框关闭瞬间抛出未捕获崩溃。
+  - 在 `wait_for_challenge_signal` 中增加对 `Element is not visible or does not exist` 及 `NoneType` locator 异常的识别，将其作为平稳的 `ChallengeSignal.FAILURE` 返回而非崩溃中断调用链。
+  - 将 GLM 请求的连接超时时间收敛至 15 秒（总超时维持在 `GLM_REQUEST_TIMEOUT_SECONDS`），并在触发 `httpx.TimeoutException` 时输出包含端点与超时预算的清晰警告日志。
