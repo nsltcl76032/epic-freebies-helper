@@ -416,6 +416,41 @@ def _resolve_gemini_base_url(raw_base_url: str) -> str:
     return base_url
 
 
+def mask_endpoint_url(raw_url: str) -> str:
+    if not raw_url:
+        return ""
+    try:
+        parsed = urlparse(raw_url)
+        scheme = parsed.scheme or "https"
+        host = parsed.hostname or ""
+        port = f":{parsed.port}" if parsed.port else ""
+        path = parsed.path or ""
+
+        # Default open.bigmodel.cn is public and safe to keep identifiable
+        if host == "open.bigmodel.cn":
+            return f"{scheme}://open.bigmodel.cn{port}{path}"
+
+        parts = host.split(".")
+        if len(parts) >= 3:
+            domain = ".".join(parts[-2:])
+            sub = ".".join(parts[:-2])
+            masked_sub = f"{sub[0]}***{sub[-1]}" if len(sub) > 2 else "***"
+            masked_host = f"{masked_sub}.{domain}"
+        elif len(parts) == 2:
+            main = parts[0]
+            masked_main = f"{main[:2]}***{main[-1]}" if len(main) > 3 else "***"
+            masked_host = f"{masked_main}.{parts[1]}"
+        elif host:
+            masked_host = f"{host[:1]}***" if len(host) > 2 else "***"
+        else:
+            masked_host = "***"
+
+        return f"{scheme}://{masked_host}{port}{path}"
+    except Exception:
+        return "***"
+
+
+
 def _extract_drag_points_from_value(value: Any) -> tuple[dict[str, int], dict[str, int]] | None:
     if isinstance(value, dict):
         drag_paths = _extract_drag_paths_from_value(value)
@@ -1357,7 +1392,7 @@ class _GLMAsyncModels:
             except httpx.TimeoutException as err:
                 logger.warning(
                     "GLM request timed out | endpoint={} | timeout={}s (connect={}s) | err_type={}",
-                    endpoint,
+                    mask_endpoint_url(endpoint),
                     request_timeout,
                     connect_timeout,
                     type(err).__name__,
@@ -1370,7 +1405,7 @@ class _GLMAsyncModels:
                 cause = type(err.__cause__).__name__ if err.__cause__ else type(err).__name__
                 logger.error(
                     "GLM network request failed | endpoint={} | error_type={} | cause={} | detail={}",
-                    endpoint,
+                    mask_endpoint_url(endpoint),
                     type(err).__name__,
                     cause,
                     str(err) or repr(err),
@@ -1431,7 +1466,7 @@ def apply_gemini_patch(settings: Any):
             if base_url:
                 kwargs["http_options"] = types.HttpOptions(base_url=base_url)
                 logger.info(
-                    f"🚀 Gemini 兼容补丁已应用 | 模型: {settings.GEMINI_MODEL} | 地址: {base_url}"
+                    f"🚀 Gemini 兼容补丁已应用 | 模型: {settings.GEMINI_MODEL} | 地址: {mask_endpoint_url(base_url)}"
                 )
             else:
                 logger.info(f"🚀 Gemini 官方接口已应用默认配置 | 模型: {settings.GEMINI_MODEL}")
@@ -1489,7 +1524,7 @@ def apply_gemini_patch(settings: Any):
                     logger.warning(
                         "Gemini native endpoint returned 404; falling back to OpenAI-compatible "
                         "endpoint | endpoint={}",
-                        fallback_endpoint,
+                        mask_endpoint_url(fallback_endpoint),
                     )
                     return await openai_fallback_models.generate_content(
                         model=model, contents=normalized, **kwargs
@@ -1514,7 +1549,7 @@ def apply_glm_patch(settings: Any):
         if not _limit_glm_provider_attempts():
             logger.warning("GLM provider retry budget could not be configured")
         logger.info(
-            f"🚀 GLM 兼容补丁已应用 | 模型: {settings.GLM_MODEL} | 地址: {settings.GLM_BASE_URL}"
+            f"🚀 GLM 兼容补丁已应用 | 模型: {settings.GLM_MODEL} | 地址: {mask_endpoint_url(settings.GLM_BASE_URL)}"
         )
     except Exception as exc:
         logger.error(f"❌ GLM 兼容补丁加载失败: {exc}")

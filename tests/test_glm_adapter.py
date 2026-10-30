@@ -19,6 +19,7 @@ from extensions.llm_adapter import (
     _normalize_glm_payload,
     _resolve_gemini_base_url,
     _resolve_openai_compatible_endpoint,
+    mask_endpoint_url,
 )
 
 
@@ -384,3 +385,21 @@ def test_area_select_arbitrary_points_key_is_coerced_to_points():
     )
     challenge = ImageAreaSelectChallenge(**payload)
     assert [point.model_dump() for point in challenge.points] == [{"x": 755, "y": 505}]
+
+
+def test_mask_endpoint_url_preserves_official_and_masks_custom_domains():
+    assert (
+        mask_endpoint_url("https://open.bigmodel.cn/api/paas/v4/chat/completions")
+        =="https://open.bigmodel.cn/api/paas/v4/chat/completions"
+    )
+    masked_custom = mask_endpoint_url("https://my-private-proxy.example.com:8443/v1/chat/completions")
+    assert "my-private-proxy" not in masked_custom
+    assert "example.com:8443/v1/chat/completions" in masked_custom
+    assert "***" in masked_custom
+
+    masked_two_part = mask_endpoint_url("https://privateproxy.com/chat/completions")
+    assert "privateproxy.com" not in masked_two_part
+    assert ".com/chat/completions" in masked_two_part
+
+    assert mask_endpoint_url("") == ""
+

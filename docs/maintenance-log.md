@@ -1486,3 +1486,4 @@
   - 在 `patched_challenge_image_label_select` 与 `patched_challenge_image_drag_drop` 中为 `get_challenge_frame_locator()` 及后续元素操作补充 try-except 保护，并在提交按钮点击处忽略元素丢失异常，防止挑战框关闭瞬间抛出未捕获崩溃。
   - 在 `wait_for_challenge_signal` 中增加对 `Element is not visible or does not exist` 及 `NoneType` locator 异常的识别，将其作为平稳的 `ChallengeSignal.FAILURE` 返回而非崩溃中断调用链。
   - 将 GLM 请求的连接超时时间收敛至 15 秒（总超时维持在 `GLM_REQUEST_TIMEOUT_SECONDS`），并在触发 `httpx.TimeoutException` 时输出包含端点与超时预算的清晰警告日志。
+  - 新增 `mask_endpoint_url` 函数对日志中的 `GLM_BASE_URL` / `GEMINI_BASE_URL` 以及请求 endpoint 进行自动掩码脱敏（保留公开可识别的官方域名，对自定义反代和私有中转域名进行子域与主域名脱敏），防止敏感私有地址泄露在控制台或 Actions 日志中。
