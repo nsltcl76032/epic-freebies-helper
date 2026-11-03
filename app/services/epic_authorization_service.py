@@ -520,41 +520,12 @@ class EpicAuthorization:
             return False
 
         logger.info("Epic 'Welcome back' (switch-account) screen detected; clicking saved account card")
-        
-        # 1. First attempt: Direct DOM click via JavaScript evaluation
-        try:
-            clicked = await self.page.evaluate('''() => {
-                const findAndClick = (doc) => {
-                    const el = Array.from(doc.querySelectorAll('*')).find(e => {
-                        const t = (e.innerText || '').trim();
-                        return (t.includes('旧_友') || t.includes('5***7@qq.com') || (t.includes('5***') && t.includes('@'))) && !t.includes('Welcome back');
-                    });
-                    if (el) {
-                        const target = el.closest('button, [role="button"], a, li, div[tabindex]') || el;
-                        target.click();
-                        return true;
-                    }
-                    return false;
-                };
-                if (findAndClick(document)) return true;
-                for (const f of document.querySelectorAll('iframe')) {
-                    try {
-                        if (f.contentDocument && findAndClick(f.contentDocument)) return true;
-                    } catch (e) {}
-                }
-                return false;
-            }''')
-            if clicked:
-                logger.success("Clicked saved account card via DOM evaluate click")
-                await self.page.wait_for_timeout(3000)
-                return True
-        except Exception as e:
-            logger.debug("DOM evaluate click error: {!r}", e)
 
-        # 2. Second attempt: Playwright selectors
+        # 1. Native trusted pointer clicks on recognizable elements in the saved account card
         selectors = [
             "text=旧_友丶",
             "text=5***7@qq.com",
+            "//div[contains(., '旧_友') and contains(., '5***')]",
             "//div[@role='button' and (contains(., '5***') or contains(., '旧'))]",
             "//button[contains(., '5***') or contains(., '旧')]",
             "//li[contains(., '5***') or contains(., '旧')]",
@@ -564,13 +535,38 @@ class EpicAuthorization:
         for sel in selectors:
             with suppress(Exception):
                 card = self.page.locator(sel).first
-                if await card.is_visible(timeout=1500):
-                    await card.click()
-                    logger.success("Clicked saved account card on Welcome back screen ({})", sel)
+                if await card.is_visible(timeout=1000):
+                    await card.click(force=True)
+                    logger.success("Clicked saved account card via native Playwright click ({})", sel)
+                    with suppress(Exception):
+                        await self.page.wait_for_load_state("domcontentloaded", timeout=5000)
                     await self.page.wait_for_timeout(3000)
                     return True
 
-        # 3. Third attempt: Keyboard navigation fallback
+        # 2. Synthetic pointer & mouse event dispatch in DOM
+        try:
+            clicked = await self.page.evaluate('''() => {
+                const el = Array.from(document.querySelectorAll('*')).find(e => {
+                    const t = (e.innerText || '').trim();
+                    return (t.includes('旧_友') || t.includes('5***7@qq.com')) && !t.includes('Welcome back');
+                });
+                if (el) {
+                    const target = el.closest('button, [role="button"], a, li, div[tabindex]') || el;
+                    target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+                    target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+                    target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                    return true;
+                }
+                return false;
+            }''')
+            if clicked:
+                logger.success("Clicked saved account card via synthetic mouse events")
+                await self.page.wait_for_timeout(3000)
+                return True
+        except Exception as e:
+            logger.debug("Synthetic click error: {!r}", e)
+
+        # 3. Keyboard navigation fallback (Tab -> Enter)
         with suppress(Exception):
             await self.page.keyboard.press("Tab")
             await self.page.keyboard.press("Enter")
