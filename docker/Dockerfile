@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/playwright:v1.52.0-noble
+FROM mcr.microsoft.com/playwright:v1.53.0-noble
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 USER root
@@ -34,3 +34,4 @@ RUN apt-get update -y && \
 RUN uv run camoufox fetch
 
 ADD . /app
+RUN chmod +x /app/docker/entrypoint.sh

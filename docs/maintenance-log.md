@@ -1706,3 +1706,20 @@
   - 更新 `docker/docker-compose.yaml` 映射 `6080:6080` 端口。
 
 
+
+### 2026-11-03 升级 Playwright 基础镜像至 v1.53.0 并增强容器重启自愈锁清理
+
+- 现象：
+  - 容器启动后频繁崩溃并无限重启（Exit Code 1）。
+  - 错误日志提示：`Executable doesn't exist at /ms-playwright/firefox-1488/firefox/firefox`，Playwright SDK 已更新至 1.53.0 但镜像依然是 v1.52.0-noble。
+  - 伴随现象：容器连续重启时 `/tmp/.X99-lock` 残留导致 Xvfb 报错 `Server is already active for display 99`，且用户目录 `user_data/.../lock` 残留阻碍 Camoufox 启动。
+- 根因判断：
+  - `uv.lock` 中 Playwright 版本为 1.53.0，需要 `firefox-1488`，而基础镜像 `mcr.microsoft.com/playwright:v1.52.0-noble` 仅包含 `firefox-1482`。
+  - 崩溃重启未清理 X11 锁文件与浏览器 profile 锁文件，导致 Camoufox 初始化失败后触发回退，回退至 playwright.firefox 后彻底崩溃退出。
+- 改动文件：
+  - `docker/Dockerfile`
+  - `docker/entrypoint.sh`
+  - `docs/maintenance-log.md`
+- 处理结果：
+  - 将 Dockerfile 基础镜像升级为 `mcr.microsoft.com/playwright:v1.53.0-noble`，匹配 Playwright 1.53.0 浏览器依赖。
+  - 在 `docker/entrypoint.sh` 启动前增加锁清理逻辑，自动清除历史残留的 X11 与 profile 锁，保障容器异常退出后的自动愈合。

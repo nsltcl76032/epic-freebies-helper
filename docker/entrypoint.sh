@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -e
 
+# 清理可能残留的 X 屏幕锁与 profile 锁，保证崩溃重启自愈
+rm -f /tmp/.X*-lock /tmp/.X11-unix/X* /app/app/volumes/user_data/*/*.lock /app/app/volumes/user_data/*/lock 2>/dev/null || true
+
 # 默认虚拟显示器
 export DISPLAY="${DISPLAY:-:99}"
 
@@ -10,7 +13,7 @@ XVFB_PID=$!
 
 # 等待 Xvfb 准备就绪
 for i in {1..10}; do
-    if xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
+    if [ -e "/tmp/.X11-unix/X${DISPLAY#*:}" ] || xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
         break
     fi
     sleep 0.5
