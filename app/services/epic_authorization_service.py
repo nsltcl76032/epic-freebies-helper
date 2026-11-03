@@ -511,14 +511,12 @@ class EpicAuthorization:
 
     async def _handle_switch_account_screen(self) -> bool:
         url = (self.page.url or "").lower()
-        if "switch-account" not in url:
+        is_switch_account = "switch-account" in url
+        if not is_switch_account:
             with suppress(Exception):
-                if await self.page.locator("text=Welcome back").is_visible(timeout=500):
-                    pass
-                else:
-                    return False
-            if "switch-account" not in (self.page.url or "").lower() and not await self.page.locator("text=Welcome back").is_visible(timeout=500):
-                return False
+                is_switch_account = await self.page.is_visible("text=Welcome back")
+        if not is_switch_account:
+            return False
 
         logger.info("Epic 'Welcome back' (switch-account) screen detected; waiting for skeleton to detach and card to render")
 
