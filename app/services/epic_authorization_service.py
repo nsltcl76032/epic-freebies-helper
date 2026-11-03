@@ -1338,6 +1338,15 @@ class EpicAuthorization:
             if status == "true":
                 return
             if status == "false":
+                logger.info("Epic store reports isloggedin=false; triggering SSO redirect via /id/login")
+                sso_url = "https://www.epicgames.com/id/login?redirectUrl=https%3A%2F%2Fstore.epicgames.com%2Ffree-games%3Flang%3Den-US&productName=egs"
+                await self.page.goto(sso_url, wait_until="domcontentloaded")
+                await self.page.wait_for_timeout(3000)
+                if "/id/login" not in self.page.url:
+                    await self._goto_claim_page()
+                    if await self._get_login_status(timeout_ms=5000) == "true":
+                        logger.success("Epic store session successfully established via SSO")
+                        return
                 raise RuntimeError(
                     "Epic store still reports isloggedin=false after authentication. "
                     f"current_url={self.page.url}"
