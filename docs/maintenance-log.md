@@ -1655,3 +1655,18 @@
   - 跨平台判重（同一 namespace 下 PC / Android / iOS 被误判为已拥有）不在此 PR 范围内，另见独立修复 PR。
   - 已知限制：Android 商品全球可领，iOS 商品 Epic 仅面向欧盟区域提供，非欧盟账号可能在结账时被拒；因此 iOS 开关默认关闭，需先人工验证再开启。
   - 按仓库规则未执行测试；`py_compile`、`ruff`、`black -C -l 100`、`git diff --check` 复核通过。
+
+### 2026-11-03 合并上游 PR 并支持 Docker 镜像构建工作流
+
+- 现象：
+  - 上游仓库包含若干关于 hCaptcha 隔离、商品页购买 CTA 识别、会话过期自动重登、跨平台 offerId 匹配以及移动端免费游戏领取的改进 PR 未被合并。
+  - 需要打出集合最新 upstream PR 的 Docker 镜像，但原仓库中的 Docker 构建工作流仅在 Release 发布时触发，不支持手动触发或分支构建。
+- 根因判断：
+  - 原工作流缺少 `workflow_dispatch` 与多分支触发配置，且镜像 tag 未适配多场景触发。
+- 改动文件：
+  - `.github/workflows/ci_docker_fish.yaml`
+  - `docs/maintenance-log.md`
+- 处理结果：
+  - 在新分支 `feature/merged-all-prs` 中依次合入 PR #27、#33、#34、#36、#37，解决维护日志冲突并保持提交链与业务逻辑完整。
+  - 完善 `.github/workflows/ci_docker_fish.yaml`：增加 `workflow_dispatch` 支持自定义 tag 构建发布，支持分支推送触发，保持构建 `linux/amd64` 和 `linux/arm64` 双架构并推送到 GitHub Container Registry (ghcr.io)。
+  - `git diff --check` 检查通过，按仓库规则未执行测试。

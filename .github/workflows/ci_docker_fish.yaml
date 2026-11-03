@@ -1,6 +1,18 @@
 name: Docker Build and Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Docker image tag (default: latest)'
+        required: false
+        default: 'latest'
+  push:
+    branches:
+      - master
+      - feature/merged-all-prs
+    tags:
+      - 'v*'
   release:
     types: [published]
 
@@ -46,19 +58,19 @@ jobs:
           type=semver,pattern={{major}}.{{minor}}
           type=semver,pattern={{major}}
           type=sha,format=short
-          type=raw,value=latest,enable=${{ !github.event.release.prerelease }}
+          type=ref,event=branch
+          type=raw,value=latest,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/master' || github.event_name == 'release' && !github.event.release.prerelease || github.event_name == 'workflow_dispatch' && github.event.inputs.tag == 'latest' }}
+          type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' }}
 
     # 5. 构建并推送 (已修正 Dockerfile 路径)
     - name: Build and push Docker image
       uses: docker/build-push-action@v5
       with:
         context: .
-        # 👇 修正了这里：指向 ./docker/Dockerfile
         file: ./docker/Dockerfile
         push: true
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
-        # 👇 确保包含 linux/arm64
         platforms: linux/amd64,linux/arm64
