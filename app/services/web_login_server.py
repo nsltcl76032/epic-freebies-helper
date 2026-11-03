@@ -29,8 +29,8 @@ HTML_PAGE = """<!DOCTYPE html>
         .container { max-width: 960px; width: 100%; display: flex; flex-direction: column; align-items: center; }
         h1 { margin-bottom: 8px; font-size: 20px; }
         .status-box { background: #222; border: 1px solid #333; padding: 10px 16px; border-radius: 8px; width: 100%; box-sizing: border-box; margin-bottom: 15px; font-size: 14px; color: #00e676; display: flex; justify-content: space-between; align-items: center; }
-        .screen-container { position: relative; border: 2px solid #444; border-radius: 8px; overflow: hidden; background: #000; box-shadow: 0 4px 20px rgba(0,0,0,0.5); cursor: crosshair; }
-        #screen { display: block; max-width: 100%; height: auto; }
+        .screen-container { position: relative; border: 2px solid #444; border-radius: 8px; overflow: hidden; background: #000; box-shadow: 0 4px 20px rgba(0,0,0,0.5); cursor: crosshair; user-select: none; -webkit-user-drag: none; }
+        #screen { display: block; max-width: 100%; height: auto; user-select: none; pointer-events: none; }
         .controls { margin-top: 15px; display: flex; gap: 10px; width: 100%; flex-wrap: wrap; }
         input[type="text"] { flex: 1; padding: 10px; border-radius: 6px; border: 1px solid #444; background: #222; color: #fff; font-size: 14px; min-width: 200px; }
         button { padding: 10px 16px; border-radius: 6px; border: none; background: #0070f3; color: #fff; font-weight: bold; cursor: pointer; transition: background 0.2s; }
@@ -49,9 +49,9 @@ HTML_PAGE = """<!DOCTYPE html>
         </div>
 
         <div class="screen-container" id="screen-box">
-            <img id="screen" src="/api/screenshot" alt="实时屏幕">
+            <img id="screen" src="/api/screenshot" alt="实时屏幕" draggable="false">
         </div>
-        <div class="hint">提示: 点击画面任意位置可直接模拟在浏览器中点击对应坐标。</div>
+        <div class="hint">提示: 支持在画面上直接点击，以及按住鼠标/触控拖拽（例如滑块或拼图验证码）。</div>
 
         <div class="controls">
             <input type="text" id="text-input" placeholder="输入要发送的内容 (如验证码、2FA等)...">
@@ -63,11 +63,14 @@ HTML_PAGE = """<!DOCTYPE html>
 
     <script>
         const img = document.getElementById('screen');
+        const screenBox = document.getElementById('screen-box');
         const statusText = document.getElementById('status-text');
         const pageUrl = document.getElementById('page-url');
 
-        // 定时轮询截图与状态
+        let isPolling = true;
+
         async function updateScreen() {
+            if (!isPolling) return;
             try {
                 const res = await fetch('/api/status');
                 const data = await res.json();
@@ -80,26 +83,87 @@ HTML_PAGE = """<!DOCTYPE html>
         }
         setInterval(updateScreen, 1500);
 
-        // 点击坐标发送到后台
-        img.addEventListener('click', async (e) => {
+        function getCoords(e) {
             const rect = img.getBoundingClientRect();
-            const scaleX = img.naturalWidth / rect.width;
-            const scaleY = img.naturalHeight / rect.height;
-            const clickX = Math.round((e.clientX - rect.left) * scaleX);
-            const clickY = Math.round((e.clientY - rect.top) * scaleY);
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            const scaleX = (img.naturalWidth || rect.width) / rect.width;
+            const scaleY = (img.naturalHeight || rect.height) / rect.height;
+            return {
+                x: Math.round((clientX - rect.left) * scaleX),
+                y: Math.round((clientY - rect.top) * scaleY)
+            };
+        }
 
-            statusText.innerText = `正在点击 (${clickX}, ${clickY})...`;
+        let dragStart = null;
+        let isDragging = false;
+
+        function onPointerDown(e) {
+            e.preventDefault();
+            dragStart = getCoords(e);
+            isDragging = false;
+            isPolling = false; // 拖拽中暂停截图刷新，避免画面跳跃
+        }
+
+        function onPointerMove(e) {
+            if (!dragStart) return;
+            e.preventDefault();
+            const cur = getCoords(e);
+            const dist = Math.hypot(cur.x - dragStart.x, cur.y - dragStart.y);
+            if (dist > 5) {
+                isDragging = true;
+                statusText.innerText = `正在拖拽: 从 (${dragStart.x}, ${dragStart.y}) 到 (${cur.x}, ${cur.y})...`;
+            }
+        }
+
+        async function onPointerUp(e) {
+            if (!dragStart) return;
+            e.preventDefault();
+            const endCoords = e.changedTouches ? {
+                x: Math.round((e.changedTouches[0].clientX - img.getBoundingClientRect().left) * (img.naturalWidth / img.getBoundingClientRect().width)),
+                y: Math.round((e.changedTouches[0].clientY - img.getBoundingClientRect().top) * (img.naturalHeight / img.getBoundingClientRect().height))
+            } : getCoords(e);
+
+            const start = dragStart;
+            const wasDrag = isDragging;
+            dragStart = null;
+            isDragging = false;
+            isPolling = true;
+
             try {
-                await fetch('/api/click', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ x: clickX, y: clickY })
-                });
-                setTimeout(updateScreen, 500);
+                if (wasDrag) {
+                    statusText.innerText = `发送拖拽动作 (${start.x}, ${start.y}) -> (${endCoords.x}, ${endCoords.y})...`;
+                    await fetch('/api/drag', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            startX: start.x,
+                            startY: start.y,
+                            endX: endCoords.x,
+                            endY: endCoords.y
+                        })
+                    });
+                } else {
+                    statusText.innerText = `正在点击 (${start.x}, ${start.y})...`;
+                    await fetch('/api/click', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ x: start.x, y: start.y })
+                    });
+                }
+                setTimeout(updateScreen, 600);
             } catch (err) {
                 console.error(err);
             }
-        });
+        }
+
+        screenBox.addEventListener('mousedown', onPointerDown);
+        window.addEventListener('mousemove', onPointerMove);
+        window.addEventListener('mouseup', onPointerUp);
+
+        screenBox.addEventListener('touchstart', onPointerDown, { passive: false });
+        window.addEventListener('touchmove', onPointerMove, { passive: false });
+        window.addEventListener('touchend', onPointerUp, { passive: false });
 
         async function sendText() {
             const val = document.getElementById('text-input').value;

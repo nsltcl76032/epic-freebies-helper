@@ -16,10 +16,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     uv sync --frozen --no-cache --all-extras
 
-# Install system packages, including unzip for the manual installation
+# Install system packages, including unzip for the manual installation, x11vnc and novnc for remote web desktop
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
     xvfb \
+    x11vnc \
+    novnc \
+    websockify \
     tini \
     wget \
     curl \

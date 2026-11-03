@@ -1688,23 +1688,21 @@
   - 在 `tests/test_hcaptcha_adapter.py` 中补充单元校验逻辑。
   - 代码通过静态检查，按仓库规则未运行实盘测试。
 
-### 2026-11-03 优化验证码后表单提交流程并新增 Web 辅助登录控制台
+### 2026-11-03 引入 noVNC Web 远程桌面支持人工交互式登录与验证码拖拽
 
 - 现象：
-  - 在高风控网络环境下，hCaptcha 验证码成功后，登录页面由于延迟未能立刻捕获到随之产生的 login POST 请求；原有重试逻辑过早触发重新点击 Sign-in 按钮，导致 Epic 前端风控再次弹出验证码陷入死循环或超限退出。
-  - 用户缺少直接介入容器内浏览器完成交互式人机验证或二次认证（2FA/TOTP）的手段。
+  - 简易截图流页面只支持单点点击，无法平滑进行复杂的滑块拖拽或多图拖动验证码；并且普通 iframe 嵌入 Epic 登录页因 `X-Frame-Options: DENY` 和 `Content-Security-Policy` 安全头被现代浏览器直接拦截。
+  - 用户需要一个低延迟、原生的交互式图形界面来拖动验证码和处理各类 2FA 认证。
 - 根因判断：
-  - 验证码通过后前端框架需要若干毫秒至秒级时间将 token 注入表单或触发表单提交/重定向，缺乏短暂等待直接判断 `submitted` 并强行重提交容易激怒风控。
-  - 容器环境运行在虚拟屏幕下，遇到极端风控或复杂的动态多图拖拽时，模型推理延迟较高或易被判风控，人工直接辅助登录是成功率最高且一劳永逸的方法。
+  - hCaptcha 拖拽验证需要连续的 mousedown、mousemove 轨迹和 mouseup 事件流，且 token 有严格时效；noVNC 直接连接容器内置虚拟 X 屏幕，能提供完全等同于本地桌面浏览器的连贯鼠标手势和键盘交互。
 - 改动文件：
-  - `app/services/epic_authorization_service.py`
-  - `app/services/web_login_server.py`
-  - `app/deploy.py`
-  - `app/settings.py`
+  - `docker/Dockerfile`
+  - `docker/entrypoint.sh`
   - `docker/docker-compose.yaml`
   - `docs/maintenance-log.md`
 - 处理结果：
-  - 在 `epic_authorization_service.py` 中增加验证码解出后的过渡缓冲与状态探测，避免过早强行重按 Sign-in。
-  - 新增轻量级 `web_login_server.py` Web 辅助控制台（默认暴露 8080 端口），提供实时画面、交互点击、文本输入、按键发送与刷新控制功能，方便用户通过外部浏览器直接辅助完成登录或处理 2FA。
-  - 在 `settings.py` 中增加 `ENABLE_WEB_LOGIN` 和 `WEB_LOGIN_PORT` 配置项；更新 `docker/docker-compose.yaml` 映射 `8080:8080` 端口。
+  - 在 Dockerfile 中安装 `x11vnc`、`novnc`、`websockify`。
+  - 新增 `docker/entrypoint.sh`，自动管理虚拟 Xvfb 屏幕与 VNC/noVNC 服务（默认暴露 6080 端口）。
+  - 更新 `docker/docker-compose.yaml` 映射 `6080:6080` 端口。
+
 
