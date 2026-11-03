@@ -502,16 +502,11 @@ class EpicAuthorization:
         if "/id/login" in url or "/id/register" in url:
             return False
         if "/account/personal" in url or "/account" in url:
-            for selector in [
-                "text=Account ID:",
-                "text=Account information",
-                "text=Personal Details",
-                "text=Display name",
-                "//input[@id='email' and @readonly]",
-            ]:
-                with suppress(Exception):
-                    if await self.page.locator(selector).first.is_visible(timeout=500):
-                        return True
+            return True
+        with suppress(Exception):
+            email_input = self.page.locator("#email")
+            if await email_input.is_visible(timeout=1000) and not await email_input.is_editable():
+                return True
         return False
 
     async def _wait_for_login_form(self, point_url: str) -> None:
