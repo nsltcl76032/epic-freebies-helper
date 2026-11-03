@@ -520,32 +520,64 @@ class EpicAuthorization:
             return False
 
         logger.info("Epic 'Welcome back' (switch-account) screen detected; clicking saved account card")
+        
+        # 1. First attempt: Direct DOM click via JavaScript evaluation
+        try:
+            clicked = await self.page.evaluate('''() => {
+                const findAndClick = (doc) => {
+                    const el = Array.from(doc.querySelectorAll('*')).find(e => {
+                        const t = (e.innerText || '').trim();
+                        return (t.includes('旧_友') || t.includes('5***7@qq.com') || (t.includes('5***') && t.includes('@'))) && !t.includes('Welcome back');
+                    });
+                    if (el) {
+                        const target = el.closest('button, [role="button"], a, li, div[tabindex]') || el;
+                        target.click();
+                        return true;
+                    }
+                    return false;
+                };
+                if (findAndClick(document)) return true;
+                for (const f of document.querySelectorAll('iframe')) {
+                    try {
+                        if (f.contentDocument && findAndClick(f.contentDocument)) return true;
+                    } catch (e) {}
+                }
+                return false;
+            }''')
+            if clicked:
+                logger.success("Clicked saved account card via DOM evaluate click")
+                await self.page.wait_for_timeout(3000)
+                return True
+        except Exception as e:
+            logger.debug("DOM evaluate click error: {!r}", e)
+
+        # 2. Second attempt: Playwright selectors
         selectors = [
+            "text=旧_友丶",
+            "text=5***7@qq.com",
             "//div[@role='button' and (contains(., '5***') or contains(., '旧'))]",
             "//button[contains(., '5***') or contains(., '旧')]",
             "//li[contains(., '5***') or contains(., '旧')]",
-            "text=旧_友丶",
-            "text=5***7@qq.com",
             "[data-testid='account-card']",
             "[data-testid='remembered-account-item']",
         ]
         for sel in selectors:
             with suppress(Exception):
                 card = self.page.locator(sel).first
-                if await card.is_visible(timeout=1000):
+                if await card.is_visible(timeout=1500):
                     await card.click()
                     logger.success("Clicked saved account card on Welcome back screen ({})", sel)
                     await self.page.wait_for_timeout(3000)
                     return True
 
+        # 3. Third attempt: Keyboard navigation fallback
         with suppress(Exception):
-            use_another = self.page.locator("text=Use another account")
-            if await use_another.is_visible(timeout=1000):
-                await self.page.keyboard.press("Tab")
-                await self.page.keyboard.press("Enter")
-                logger.success("Selected saved account card via Tab/Enter fallback")
-                await self.page.wait_for_timeout(3000)
-                return True
+            await self.page.keyboard.press("Tab")
+            await self.page.keyboard.press("Enter")
+            logger.success("Selected saved account card via Tab/Enter fallback")
+            await self.page.wait_for_timeout(3000)
+            return True
+
         return False
 
     async def _wait_for_login_form(self, point_url: str) -> None:
