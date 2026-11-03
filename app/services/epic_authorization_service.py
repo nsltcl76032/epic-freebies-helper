@@ -509,12 +509,53 @@ class EpicAuthorization:
                 return True
         return False
 
+    async def _handle_switch_account_screen(self) -> bool:
+        url = (self.page.url or "").lower()
+        is_switch_page = "switch-account" in url
+        if not is_switch_page:
+            with suppress(Exception):
+                if await self.page.locator("text=Welcome back").is_visible(timeout=500):
+                    is_switch_page = True
+        if not is_switch_page:
+            return False
+
+        logger.info("Epic 'Welcome back' (switch-account) screen detected; clicking saved account card")
+        selectors = [
+            "//div[@role='button' and (contains(., '5***') or contains(., '旧'))]",
+            "//button[contains(., '5***') or contains(., '旧')]",
+            "//li[contains(., '5***') or contains(., '旧')]",
+            "text=旧_友丶",
+            "text=5***7@qq.com",
+            "[data-testid='account-card']",
+            "[data-testid='remembered-account-item']",
+        ]
+        for sel in selectors:
+            with suppress(Exception):
+                card = self.page.locator(sel).first
+                if await card.is_visible(timeout=1000):
+                    await card.click()
+                    logger.success("Clicked saved account card on Welcome back screen ({})", sel)
+                    await self.page.wait_for_timeout(3000)
+                    return True
+
+        with suppress(Exception):
+            use_another = self.page.locator("text=Use another account")
+            if await use_another.is_visible(timeout=1000):
+                await self.page.keyboard.press("Tab")
+                await self.page.keyboard.press("Enter")
+                logger.success("Selected saved account card via Tab/Enter fallback")
+                await self.page.wait_for_timeout(3000)
+                return True
+        return False
+
     async def _wait_for_login_form(self, point_url: str) -> None:
         deadline = time.monotonic() + 45
         recovery_attempts = 0
         email_input = self.page.locator("#email")
 
         while time.monotonic() < deadline:
+            if await self._handle_switch_account_screen():
+                return
             if await self._is_already_logged_in_on_account_page():
                 logger.success("Active session confirmed during login wait; skipping login form")
                 return
@@ -1338,10 +1379,18 @@ class EpicAuthorization:
             if status == "true":
                 return
             if status == "false":
-                logger.info("Epic store reports isloggedin=false; triggering SSO redirect via /id/login")
+                logger.info("Epic store reports isloggedin=false; checking switch-account and SSO redirect")
+                if await self._handle_switch_account_screen():
+                    await self._goto_claim_page()
+                    if await self._get_login_status(timeout_ms=5000) == "true":
+                        logger.success("Epic store session established after switch-account card click")
+                        return
+
                 sso_url = "https://www.epicgames.com/id/login?redirectUrl=https%3A%2F%2Fstore.epicgames.com%2Ffree-games%3Flang%3Den-US&productName=egs"
                 await self.page.goto(sso_url, wait_until="domcontentloaded")
                 await self.page.wait_for_timeout(3000)
+                if await self._handle_switch_account_screen():
+                    await self.page.wait_for_timeout(3000)
                 if "/id/login" not in self.page.url:
                     await self._goto_claim_page()
                     if await self._get_login_status(timeout_ms=5000) == "true":
