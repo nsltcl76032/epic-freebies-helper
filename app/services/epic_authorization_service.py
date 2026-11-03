@@ -1057,6 +1057,9 @@ class EpicAuthorization:
                         if self._is_two_factor_required_error(error_code):
                             continue
 
+                    # Epic 某些版本在验证码完成后会自动触发表单提交或跳转，
+                    # 先给予短暂停留检查页面是否已经自动跳转或提交成功，避免立刻强行重按 Sign-in 触发新一轮风控验证码
+                    await self.page.wait_for_timeout(2000)
                     if (
                         not self._is_login_success_signal.empty()
                         or self._is_mfa_page()

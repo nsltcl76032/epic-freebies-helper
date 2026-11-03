@@ -85,6 +85,9 @@ async def execute_browser_tasks(headless: bool | str = True, *, collect_summary:
 
         # Handle Epic Games authentication
         logger.debug("Initiating Epic Games authentication")
+        if settings.ENABLE_WEB_LOGIN:
+            from services.web_login_server import attach_page_to_web
+            attach_page_to_web(page, status="正在进行 Epic 登录...")
         agent = EpicAuthorization(page)
         is_authenticated = await agent.invoke()
         if not is_authenticated:
@@ -286,6 +289,10 @@ async def deploy():
         settings.SPATIAL_POINT_REASONER_MODEL,
         settings.SPATIAL_PATH_REASONER_MODEL,
     )
+
+    if settings.ENABLE_WEB_LOGIN:
+        from services.web_login_server import start_login_web_server
+        start_login_web_server(port=settings.WEB_LOGIN_PORT)
 
     # Execute an immediate collection task (single- or multi-account)
     await _run_accounts(headless=headless)

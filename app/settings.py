@@ -91,6 +91,10 @@ class EpicSettings(AgentConfig):
     captcha_response_dir: Path = HCAPTCHA_DIR.joinpath(".captcha")
 
     ENABLE_APSCHEDULER: bool = Field(default=True)
+    ENABLE_WEB_LOGIN: bool = Field(
+        default=True, description="Enable web-based login helper interface on port 8080"
+    )
+    WEB_LOGIN_PORT: int = Field(default=8080, description="Port for web-based login helper")
     TASK_TIMEOUT_SECONDS: int = Field(default=900)
     # A successful hosted-runner login has taken nearly four minutes. Keep enough room for a
     # second challenge while still bounding one authentication attempt.
