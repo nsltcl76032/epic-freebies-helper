@@ -511,17 +511,22 @@ class EpicAuthorization:
 
     async def _handle_switch_account_screen(self) -> bool:
         url = (self.page.url or "").lower()
-        is_switch_page = "switch-account" in url
-        if not is_switch_page:
+        if "switch-account" not in url:
             with suppress(Exception):
                 if await self.page.locator("text=Welcome back").is_visible(timeout=500):
-                    is_switch_page = True
-        if not is_switch_page:
-            return False
+                    pass
+                else:
+                    return False
+            if "switch-account" not in (self.page.url or "").lower() and not await self.page.locator("text=Welcome back").is_visible(timeout=500):
+                return False
 
-        logger.info("Epic 'Welcome back' (switch-account) screen detected; clicking saved account card")
+        logger.info("Epic 'Welcome back' (switch-account) screen detected; waiting for skeleton to detach and card to render")
 
-        # 1. Native trusted pointer clicks on recognizable elements in the saved account card
+        # 1. Wait for loading skeletons to detach
+        with suppress(Exception):
+            await self.page.locator(".MuiSkeleton-root").first.wait_for(state="detached", timeout=8000)
+
+        # 2. Wait for saved account card to become visible and click it
         selectors = [
             "text=旧_友丶",
             "text=5***7@qq.com",
@@ -529,21 +534,21 @@ class EpicAuthorization:
             "//div[@role='button' and (contains(., '5***') or contains(., '旧'))]",
             "//button[contains(., '5***') or contains(., '旧')]",
             "//li[contains(., '5***') or contains(., '旧')]",
-            "[data-testid='account-card']",
-            "[data-testid='remembered-account-item']",
         ]
         for sel in selectors:
-            with suppress(Exception):
+            try:
                 card = self.page.locator(sel).first
-                if await card.is_visible(timeout=1000):
-                    await card.click(force=True)
-                    logger.success("Clicked saved account card via native Playwright click ({})", sel)
-                    with suppress(Exception):
-                        await self.page.wait_for_load_state("domcontentloaded", timeout=5000)
-                    await self.page.wait_for_timeout(3000)
-                    return True
+                await card.wait_for(state="visible", timeout=6000)
+                await card.click(force=True)
+                logger.success("Successfully clicked saved account card ({})", sel)
+                with suppress(Exception):
+                    await self.page.wait_for_load_state("domcontentloaded", timeout=8000)
+                await self.page.wait_for_timeout(3000)
+                return True
+            except Exception as e:
+                logger.debug("Card selector {} not ready: {!r}", sel, e)
 
-        # 2. Synthetic pointer & mouse event dispatch in DOM
+        # 3. Fallback: evaluate click after skeleton detach
         try:
             clicked = await self.page.evaluate('''() => {
                 const el = Array.from(document.querySelectorAll('*')).find(e => {
@@ -552,27 +557,17 @@ class EpicAuthorization:
                 });
                 if (el) {
                     const target = el.closest('button, [role="button"], a, li, div[tabindex]') || el;
-                    target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
-                    target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
-                    target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                    target.click();
                     return true;
                 }
                 return false;
             }''')
             if clicked:
-                logger.success("Clicked saved account card via synthetic mouse events")
+                logger.success("Clicked saved account card via fallback evaluate click")
                 await self.page.wait_for_timeout(3000)
                 return True
-        except Exception as e:
-            logger.debug("Synthetic click error: {!r}", e)
-
-        # 3. Keyboard navigation fallback (Tab -> Enter)
-        with suppress(Exception):
-            await self.page.keyboard.press("Tab")
-            await self.page.keyboard.press("Enter")
-            logger.success("Selected saved account card via Tab/Enter fallback")
-            await self.page.wait_for_timeout(3000)
-            return True
+        except Exception:
+            pass
 
         return False
 
