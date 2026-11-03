@@ -1723,3 +1723,18 @@
 - 处理结果：
   - 将 Dockerfile 基础镜像升级为 `mcr.microsoft.com/playwright:v1.53.0-noble`，匹配 Playwright 1.53.0 浏览器依赖。
   - 在 `docker/entrypoint.sh` 启动前增加锁清理逻辑，自动清除历史残留的 X11 与 profile 锁，保障容器异常退出后的自动愈合。
+
+### 2026-11-03 修复账号个人中心只读邮箱导致的 Playwright 持续高 CPU 轮询与认证崩溃
+
+- 现象：
+  - 容器运行时 CPU 占用持续维持在 150% 左右（主要由 `camoufox-bin` 和 Playwright 驱动消耗）。
+  - 日志反复出现 `Locator.fill: Timeout 30000ms exceeded ... element is not editable`，两轮重试后抛出 `RuntimeError: Authentication failed, aborting this run` 并导致容器周期性崩溃重启。
+- 根因判断：
+  - 浏览器已持有有效登录凭据，跳转 `https://www.epicgames.com/account/personal` 时直接渲染个人中心设置页面（含有 `旧_友丶` 昵称与展示用只读邮箱 `<input id="email" readonly>`）。
+  - 脚本将个人中心误判为未登录表单并执行 `email_input.fill()`，Playwright 内置等待元素变为可编辑，进而以毫秒级频率对 DOM 进行高负荷忙等待轮询 30 秒超时。
+- 改动文件：
+  - `app/services/epic_authorization_service.py`
+  - `docs/maintenance-log.md`
+- 处理结果：
+  - 新增 `_is_already_logged_in_on_account_page()`，当页面停留在个人中心并展示只读邮箱/Account ID 时直接确认为已登录。
+  - 在 `_login()`、`_wait_for_login_form()` 和 `_advance_email_login()` 中增加只读检测与快速会话复用，跳过冗余表单填写，彻底消除无效 CPU 轮询和认证失败崩溃。

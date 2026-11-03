@@ -497,15 +497,39 @@ class EpicAuthorization:
             )
         )
 
+    async def _is_already_logged_in_on_account_page(self) -> bool:
+        url = (self.page.url or "").lower()
+        if "/id/login" in url or "/id/register" in url:
+            return False
+        if "/account/personal" in url or "/account" in url:
+            for selector in [
+                "text=Account ID:",
+                "text=Account information",
+                "text=Personal Details",
+                "text=Display name",
+                "//input[@id='email' and @readonly]",
+            ]:
+                with suppress(Exception):
+                    if await self.page.locator(selector).first.is_visible(timeout=500):
+                        return True
+        return False
+
     async def _wait_for_login_form(self, point_url: str) -> None:
         deadline = time.monotonic() + 45
         recovery_attempts = 0
         email_input = self.page.locator("#email")
 
         while time.monotonic() < deadline:
-            with suppress(Exception):
-                await expect(email_input).to_be_visible(timeout=1000)
+            if await self._is_already_logged_in_on_account_page():
+                logger.success("Active session confirmed during login wait; skipping login form")
                 return
+
+            with suppress(Exception):
+                if await email_input.is_visible(timeout=1000):
+                    if await email_input.is_editable():
+                        return
+                    if await self._is_already_logged_in_on_account_page():
+                        return
 
             if await self._has_pre_login_security_check():
                 if recovery_attempts < 2:
@@ -613,9 +637,24 @@ class EpicAuthorization:
 
     async def _advance_email_login(self, agent: AgentV) -> None:
         """Advance the email step while allowing Epic to challenge before Continue."""
+        if await self._is_already_logged_in_on_account_page():
+            logger.success("Active session confirmed on account page; skipping email step")
+            return
+
         email_input = self.page.locator("#email")
         continue_button = self.page.locator("#continue")
         await expect(email_input).to_be_visible(timeout=10000)
+
+        if not await email_input.is_editable():
+            if await self._is_already_logged_in_on_account_page():
+                logger.success("Email field is readonly on account page; session active")
+                return
+            logger.warning("Email input is readonly on login page; checking continue button")
+            with suppress(Exception):
+                if await continue_button.is_visible(timeout=1000):
+                    await continue_button.click()
+            return
+
         await email_input.fill(settings.EPIC_EMAIL)
         with suppress(Exception):
             await email_input.press("Tab")
@@ -1355,7 +1394,20 @@ class EpicAuthorization:
             if os.getenv("GITHUB_ACTIONS", "").strip().lower() == "true":
                 point_url += "&sessionInvalidated=true"
             await self.page.goto(point_url, wait_until="domcontentloaded")
+
+            if await self._is_already_logged_in_on_account_page():
+                logger.success("Active session confirmed via personal account page; skipping login")
+                await self._goto_claim_page()
+                await self._ensure_store_session_ready()
+                return True
+
             await self._wait_for_login_form(point_url)
+
+            if await self._is_already_logged_in_on_account_page():
+                logger.success("Active session confirmed after form wait; skipping login")
+                await self._goto_claim_page()
+                await self._ensure_store_session_ready()
+                return True
 
             # Epic can open hCaptcha on the email step, before the password form exists.
             await self._advance_email_login(agent)
