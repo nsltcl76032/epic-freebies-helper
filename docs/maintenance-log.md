@@ -1670,3 +1670,20 @@
   - 在新分支 `feature/merged-all-prs` 中依次合入 PR #27、#33、#34、#36、#37，解决维护日志冲突并保持提交链与业务逻辑完整。
   - 完善 `.github/workflows/ci_docker_fish.yaml`：增加 `workflow_dispatch` 支持自定义 tag 构建发布，支持分支推送触发，保持构建 `linux/amd64` 和 `linux/arm64` 双架构并推送到 GitHub Container Registry (ghcr.io)。
   - `git diff --check` 检查通过，按仓库规则未执行测试。
+
+### 2026-11-03 提升 hCaptcha 点选及拖拽坐标容错与越界约束
+
+- 现象：
+  - 在使用 GLM 等第三方视觉模型求解 hCaptcha 点选/计数的空间坐标时，部分模型输出的坐标略微超出 `challenge_bbox` 或 `clickable_bounds` 几个像素（例如 (890.0, 574.0) 超出 (390.0, 99.0, 890.0, 569.0)）。
+  - `_point_answer_validation_error()` 抛出硬性 `ValueError: Unsafe hCaptcha point answer: ...`，导致登录或结账的 captcha 求解中断并崩溃。
+- 根因判断：
+  - 严格校验逻辑直接以未容错边界判定模型输出为非法并抛异常中断进程。实际上，边缘轻微越界的点多为模型离散网格量化偏差，可以通过安全 clamp 约束回有效区域，而非直接抛弃或导致任务退出；对于离群较远的异常点则过滤，仅在全部点越界时保留最近点兜底。
+- 改动文件：
+  - `app/extensions/hcaptcha_adapter.py`
+  - `tests/test_hcaptcha_adapter.py`
+  - `docs/maintenance-log.md`
+- 处理结果：
+  - 新增 `_sanitize_point_answers()`，针对挑战区域及网格边界实现边界安全 clamp 和离群点过滤；将超出有效网格若干像素内的微小误差自动截断到合法网格坐标内部，避免非必要的任务崩溃。
+  - 在拖拽求解 `_correct_drag_source_points()` 中同步为目标终点坐标增加安全范围 clamp。
+  - 在 `tests/test_hcaptcha_adapter.py` 中补充单元校验逻辑。
+  - 代码通过静态检查，按仓库规则未运行实盘测试。

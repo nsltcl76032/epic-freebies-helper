@@ -16,6 +16,7 @@ from extensions.hcaptcha_adapter import (
     _is_line_completion_question,
     _match_outline_contours,
     _point_answer_validation_error,
+    _sanitize_point_answers,
     _select_line_gap_markers,
     begin_captcha_attempt,
     end_captcha_attempt,
@@ -91,6 +92,28 @@ def test_point_answer_rejects_challenge_and_grid_overflow():
     assert "outside challenge bounds" in outside_challenge
     assert "outside clickable grid" in reference_strip
     assert valid is None
+
+
+def test_sanitize_point_answers_clamps_near_bounds_and_filters_outliers():
+    challenge_bbox = {"x": 390, "y": 100, "width": 500, "height": 470}
+    clickable_bounds = (560, 230, 880, 560)
+
+    # Point slightly outside grid (x=885 > 880) -> should be clamped
+    # Outlier point (x=400, y=120) outside grid (> 30px away) -> should be filtered
+    points = [
+        SimpleNamespace(x=885, y=400),
+        SimpleNamespace(x=400, y=120),
+    ]
+
+    sanitized = _sanitize_point_answers(
+        points,
+        challenge_bbox=challenge_bbox,
+        clickable_bounds=clickable_bounds,
+    )
+
+    assert len(sanitized) == 1
+    assert sanitized[0].x <= 880 - 2.0
+    assert sanitized[0].y == 400
 
 
 def test_payload_entity_centers_replace_invalid_model_sources(tmp_path):
