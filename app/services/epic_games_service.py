@@ -884,12 +884,91 @@ class EpicGames:
         return False
 
     @staticmethod
+    async def _is_switch_account_visible(page: Page) -> bool:
+        url = (page.url or "").lower()
+        if "switch-account" in url:
+            return True
+        with suppress(Exception):
+            if await page.is_visible("text=Welcome back"):
+                return True
+        return False
+
+    @staticmethod
+    async def _handle_switch_account_screen(page: Page) -> bool:
+        if not await EpicGames._is_switch_account_visible(page):
+            return False
+
+        logger.info(
+            "Epic 'Welcome back' (switch-account) screen detected in game collection flow; "
+            "waiting for skeleton to detach and card to render"
+        )
+
+        with suppress(Exception):
+            await page.locator(".MuiSkeleton-root").first.wait_for(state="detached", timeout=8000)
+
+        selectors = [
+            "div[data-account-id]",
+            "div[id^='account-']",
+            ".MuiListItemButton-root",
+            "text=旧_友丶",
+            "text=5***7@qq.com",
+            "//div[contains(., '旧_友') and contains(., '5***')]",
+            "//div[@role='button' and (contains(., '5***') or contains(., '旧'))]",
+            "//button[contains(., '5***') or contains(., '旧')]",
+            "//li[contains(., '5***') or contains(., '旧')]",
+        ]
+        for sel in selectors:
+            try:
+                card = page.locator(sel).first
+                await card.wait_for(state="visible", timeout=6000)
+                await card.click(force=True)
+                logger.success("Successfully clicked saved account card ({})", sel)
+                with suppress(Exception):
+                    await page.wait_for_load_state("domcontentloaded", timeout=8000)
+                await page.wait_for_timeout(3000)
+                return True
+            except Exception as e:
+                logger.debug("Card selector {} not ready: {!r}", sel, e)
+
+        try:
+            clicked = await page.evaluate('''() => {
+                const card = document.querySelector('div[data-account-id]') 
+                    || document.querySelector('div[id^="account-"]') 
+                    || document.querySelector('.MuiListItemButton-root');
+                if (card) {
+                    card.click();
+                    return true;
+                }
+                const el = Array.from(document.querySelectorAll('*')).find(e => {
+                    const t = (e.innerText || '').trim();
+                    return (t.includes('旧_友') || t.includes('5***7@qq.com')) && !t.includes('Welcome back');
+                });
+                if (el) {
+                    const target = el.closest('button, [role="button"], a, li, div[tabindex]') || el;
+                    target.click();
+                    return true;
+                }
+                return false;
+            }''')
+            if clicked:
+                logger.success("Clicked saved account card via fallback evaluate click")
+                await page.wait_for_timeout(3000)
+                return True
+        except Exception:
+            pass
+
+        return False
+
+    @staticmethod
     async def _is_device_not_supported_visible(page: Page) -> bool:
         return await EpicGames._device_not_supported_marker_present(page)
 
     @staticmethod
     async def _has_purchase_progress(page: Page, url: str) -> bool:
         if URL_CART_SUCCESS in page.url:
+            return True
+
+        if await EpicGames._is_switch_account_visible(page):
             return True
 
         if await EpicGames._is_claimed_state(page, url):
@@ -952,6 +1031,18 @@ class EpicGames:
         )
 
         for name, action in click_attempts:
+            if await EpicGames._is_switch_account_visible(page):
+                logger.warning(
+                    "Switch-account screen detected before {} purchase click - resolving - {}",
+                    name,
+                    url,
+                )
+                if await EpicGames._handle_switch_account_screen(page):
+                    logger.success("Successfully completed SSO switch-account before click attempt")
+                    await page.wait_for_timeout(3000)
+                    if await self._has_purchase_progress(page, url):
+                        return True
+
             device_modal_visible = await EpicGames._is_device_not_supported_visible(page)
             if device_modal_visible:
                 logger.warning(
@@ -973,9 +1064,32 @@ class EpicGames:
                 await asyncio.wait_for(action(), timeout=7000)
             except Exception as err:
                 logger.warning("Purchase button {} click failed - {} err={!r}", name, url, err)
+                if await EpicGames._is_switch_account_visible(page):
+                    logger.warning(
+                        "Switch-account screen detected after failed {} click - resolving - {}",
+                        name,
+                        url,
+                    )
+                    if await EpicGames._handle_switch_account_screen(page):
+                        logger.success("Successfully completed SSO switch-account after click error")
+                        await page.wait_for_timeout(3000)
+                        if await self._has_purchase_progress(page, url):
+                            return True
                 continue
 
             await page.wait_for_timeout(2500)
+
+            if await EpicGames._is_switch_account_visible(page):
+                logger.warning(
+                    "Switch-account screen appeared after {} click - resolving - {}",
+                    name,
+                    url,
+                )
+                if await EpicGames._handle_switch_account_screen(page):
+                    logger.success("Successfully completed SSO switch-account after purchase click")
+                    await page.wait_for_timeout(3000)
+                    if await self._has_purchase_progress(page, url):
+                        return True
 
             if await EpicGames._is_device_not_supported_visible(page):
                 logger.warning(
@@ -993,6 +1107,14 @@ class EpicGames:
             logger.debug(
                 "Purchase button {} click returned without visible progress - {}", name, url
             )
+
+        if await EpicGames._is_switch_account_visible(page):
+            logger.warning("Switch-account screen detected after all click attempts - resolving - {}", url)
+            if await EpicGames._handle_switch_account_screen(page):
+                logger.success("Successfully completed SSO switch-account at end of click loop")
+                await page.wait_for_timeout(3000)
+                if await self._has_purchase_progress(page, url):
+                    return True
 
         if await EpicGames._device_not_supported_marker_present(
             page, timeout=1500, frame_timeout=800
@@ -1332,6 +1454,11 @@ class EpicGames:
             await self._handle_device_not_supported_modal(
                 page, url, timeout_ms=min(1000, remaining_ms)
             )
+
+            if await EpicGames._is_switch_account_visible(page):
+                logger.warning("Switch-account screen detected while waiting for purchase state - {}", url)
+                await EpicGames._handle_switch_account_screen(page)
+                await page.wait_for_timeout(2000)
 
             if await self._is_claimed_state(page, url):
                 return "claimed", None

@@ -1755,3 +1755,19 @@
   - 从 `.dockerignore` 中移除对 `docker/` 的全局忽略。
   - 在 Dockerfile 中显式 `COPY docker/entrypoint.sh /app/docker/entrypoint.sh` 并赋予执行权限，确保无论 context 如何变更 entrypoint 均准确就位。
 
+
+### 2026-11-04 修复会话鉴权通过后点击购买重定向至 switch-account 导致领取失败的问题
+
+- 现象：
+  - 鉴权阶段已判定已登录（`isloggedin=true` 且订单历史接口探测正常），但进入商店详情页点击 `Get` 领取时始终无法进入结算或入库。
+  - 日志反复出现 `Purchase button standard click failed ... intercepts pointer events` 以及 `Purchase button dispatch/dom/coordinate click timed out`，最终产生 `click_no_effect` 截图并退出。
+- 根因判断：
+  - 账号中心（accounts.epicgames.com）凭据有效并不代表商店结账（store.epicgames.com）SSO 凭据已完全生效。点击 `Get` 下单时，Epic 强制重定向至 `/id/login/switch-account` 展示“Welcome back”快速登录卡片等待点击确认。
+  - `epic_games_service` 领游戏流程此前未处理 `switch-account` 页面，仍在原地死等商店购买按钮，导致多次点击超时并判定失败；同时鉴权初始化时未提前执行一次 SSO 端点握手同步。
+- 改动文件：
+  - `app/services/epic_authorization_service.py`
+  - `app/services/epic_games_service.py`
+  - `docs/maintenance-log.md`
+- 处理结果：
+  - 在 `epic_authorization_service.py` 中更新了选择器并于已登录分支增加跨域 SSO 同步握手。
+  - 在 `epic_games_service.py` 中增加了针对 `switch-account` / `Welcome back` 界面的检测与自动点击卡片逻辑，在点击购买前后及状态等待中自动完成 SSO 单点登录闭环并恢复购买流程。

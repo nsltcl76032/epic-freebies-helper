@@ -526,6 +526,9 @@ class EpicAuthorization:
 
         # 2. Wait for saved account card to become visible and click it
         selectors = [
+            "div[data-account-id]",
+            "div[id^='account-']",
+            ".MuiListItemButton-root",
             "text=旧_友丶",
             "text=5***7@qq.com",
             "//div[contains(., '旧_友') and contains(., '5***')]",
@@ -1552,7 +1555,17 @@ class EpicAuthorization:
                 # 都会被重定向到 /id/login/switch-account，整轮空转十几分钟才在收尾复核时失败。
                 # 这里用订单历史接口复核一次（约 2 秒），不通过就落到下面的 _login() 真登录。
                 if await self._has_account_session():
-                    logger.success("Epic Games is already logged in")
+                    # 即使订单历史接口存在会话，商店结账 SSO 仍可能需要卡片握手。
+                    # 访问带 redirectUrl 的 SSO 端点，完成账号到商店的 SSO 会话同步。
+                    logger.info("Synchronizing store SSO session via SSO endpoint...")
+                    sso_url = "https://www.epicgames.com/id/login?redirectUrl=https%3A%2F%2Fstore.epicgames.com%2Ffree-games%3Flang%3Den-US&productName=egs"
+                    await self.page.goto(sso_url, wait_until="domcontentloaded")
+                    await self.page.wait_for_timeout(3000)
+                    if await self._handle_switch_account_screen():
+                        logger.success("SSO account card confirmed during session verification")
+                        await self.page.wait_for_timeout(3000)
+                    await self._goto_claim_page()
+                    logger.success("Epic Games is already logged in and store session synchronized")
                     return True
                 logger.warning(
                     "Store reports a logged-in session but the order-history probe rejected it; "
