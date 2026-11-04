@@ -33,5 +33,7 @@ RUN apt-get update -y && \
 # This will detect the pre-installed binaries and skip re-downloading them.
 RUN uv run camoufox fetch
 
-ADD . /app
+COPY docker/entrypoint.sh /app/docker/entrypoint.sh
 RUN chmod +x /app/docker/entrypoint.sh
+
+ADD . /app

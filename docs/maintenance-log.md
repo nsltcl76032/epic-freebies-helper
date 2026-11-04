@@ -1738,3 +1738,20 @@
 - 处理结果：
   - 新增 `_is_already_logged_in_on_account_page()`，当页面停留在个人中心并展示只读邮箱/Account ID 时直接确认为已登录。
   - 在 `_login()`、`_wait_for_login_form()` 和 `_advance_email_login()` 中增加只读检测与快速会话复用，跳过冗余表单填写，彻底消除无效 CPU 轮询和认证失败崩溃。
+
+### 2026-11-03 修复 Dockerfile 构建中因 .dockerignore 排除 docker 目录导致的镜像构建失败
+
+- 现象：
+  - GitHub Actions `Docker Build and Release` 持续构建失败（Exit Code 1）。
+  - 容器启动报错 `[FATAL tini] exec /app/docker/entrypoint.sh failed: No such file or directory`。
+- 根因判断：
+  - `.dockerignore` 中配置了 `docker/` 规则，导致 `ADD . /app` 时忽略了 `docker/entrypoint.sh`。
+  - Dockerfile 随后执行 `RUN chmod +x /app/docker/entrypoint.sh` 时因文件不存在抛出错误中断镜像构建。
+- 改动文件：
+  - `.dockerignore`
+  - `docker/Dockerfile`
+  - `docs/maintenance-log.md`
+- 处理结果：
+  - 从 `.dockerignore` 中移除对 `docker/` 的全局忽略。
+  - 在 Dockerfile 中显式 `COPY docker/entrypoint.sh /app/docker/entrypoint.sh` 并赋予执行权限，确保无论 context 如何变更 entrypoint 均准确就位。
+
