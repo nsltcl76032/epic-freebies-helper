@@ -1781,3 +1781,16 @@
   - `docs/maintenance-log.md`
 - 处理结果：
   - 调整 `daily_epic_games_task` 调度策略，默认执行时间由 `12:00` 改为 `08:00`，并支持通过环境变量 `DAILY_RUN_HOUR` 和 `DAILY_RUN_MINUTE` 灵活覆盖。
+
+### 2026-11-06 修复结账安全验证出现 TRY AGAIN 时无法重新调起挑战的问题
+
+- 现象：
+  - 结账遇到安全验证（hCaptcha/Talon）时，如果首轮解题未通过或响应异常，Talon 会展示错误并展示 `TRY AGAIN` 按钮。
+  - 后续重试轮次无法找到 challenge iframe，抛出 `Cannot find a valid challenge frame: 'NoneType' object has no attribute 'locator'`，直到超时退出。
+- 根因判断：
+  - Talon 错误容器必须通过用户点击 `TRY AGAIN` 触发 `talon.execute()` 重新加载验证码题目。
+- 改动文件：
+  - `app/services/epic_games_service.py`
+  - `docs/maintenance-log.md`
+- 处理结果：
+  - 在 `_resolve_checkout_security_check` 中增加对 `TRY AGAIN` 按钮的自动检测与点击处理，并将其纳入安全验证识别词列表，确保失败后能顺畅重新加载新题目继续求解。

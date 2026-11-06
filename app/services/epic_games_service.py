@@ -1490,6 +1490,7 @@ class EpicGames:
             "PLEASE DRAG THE ICON ON THE LEFT TO THE PLACE WHERE IT FITS",
             "VERIFY THAT YOU ARE HUMAN",
             "VERIFY YOU ARE HUMAN",
+            "TRY AGAIN",
         ]
         purchase_frame_markers = [*page_markers, "I AM HUMAN", "SKIP"]
         purchase_frame_marker_pairs = [("PLEASE TRY AGAIN", "VERIFY")]
@@ -1536,6 +1537,22 @@ class EpicGames:
         while (time.monotonic() - started_at) * 1000 < max_wait_ms:
             attempt += 1
             await self._raise_if_free_game_rate_limited(page, url)
+
+            # If Talon error container with TRY AGAIN button is visible, click it to reload challenge
+            with suppress(Exception):
+                clicked_try_again = await page.evaluate('''() => {
+                    const btn = Array.from(document.querySelectorAll('button')).find(b => 
+                        (b.innerText || '').toUpperCase().includes('TRY AGAIN')
+                    );
+                    if (btn && btn.offsetParent !== null) {
+                        btn.click();
+                        return true;
+                    }
+                    return false;
+                }''')
+                if clicked_try_again:
+                    logger.info(f"Clicked Talon 'TRY AGAIN' button to reload security challenge - {url=}")
+                    await page.wait_for_timeout(3000)
 
             if await self._is_claimed_state(page, url):
                 logger.success(f"Checkout security check resolved into claimed state - {url=}")
