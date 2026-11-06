@@ -1771,3 +1771,13 @@
 - 处理结果：
   - 在 `epic_authorization_service.py` 中更新了选择器并于已登录分支增加跨域 SSO 同步握手。
   - 在 `epic_games_service.py` 中增加了针对 `switch-account` / `Welcome back` 界面的检测与自动点击卡片逻辑，在点击购买前后及状态等待中自动完成 SSO 单点登录闭环并恢复购买流程。
+
+### 2026-11-06 每日定时任务支持配置并默认调整为早上 8:00
+
+- 需求说明：
+  - 用户希望每天自动领取的调度时间调整为早上 8:00（北京时间），避免默认中午 12:00 导致新周免开启后延迟较久才领取。
+- 改动文件：
+  - `app/deploy.py`
+  - `docs/maintenance-log.md`
+- 处理结果：
+  - 调整 `daily_epic_games_task` 调度策略，默认执行时间由 `12:00` 改为 `08:00`，并支持通过环境变量 `DAILY_RUN_HOUR` 和 `DAILY_RUN_MINUTE` 灵活覆盖。

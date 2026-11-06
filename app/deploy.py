@@ -11,6 +11,7 @@ using browser automation and scheduling capabilities.
 """
 
 import asyncio
+import os
 import json
 import signal
 from contextlib import suppress
@@ -318,10 +319,12 @@ async def deploy():
         max_instances=1,
     )
 
-    # Strategy 2: Daily at 12:00 PM (Beijing Time)
+    # Strategy 2: Daily (defaults to 08:00 AM Beijing Time, configurable via DAILY_RUN_HOUR / DAILY_RUN_MINUTE)
+    daily_hour = os.getenv("DAILY_RUN_HOUR", "8").strip() or "8"
+    daily_minute = os.getenv("DAILY_RUN_MINUTE", "0").strip() or "0"
     scheduler.add_job(
         _run_accounts,
-        trigger=CronTrigger(hour="12", minute="0", timezone="Asia/Shanghai"),
+        trigger=CronTrigger(hour=daily_hour, minute=daily_minute, timezone="Asia/Shanghai"),
         id="daily_epic_games_task",
         name="daily_epic_games_task",
         args=[headless],
