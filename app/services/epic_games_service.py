@@ -1483,17 +1483,11 @@ class EpicGames:
 
     @staticmethod
     async def _is_checkout_security_check_visible(page: Page) -> bool:
-        page_markers = [
-            "ONE MORE STEP",
-            "PLEASE COMPLETE A SECURITY CHECK TO CONTINUE",
-            "PLEASE DRAG THE ICON ON THE BOTTOM TO THE PLACE WHERE IT FITS",
-            "PLEASE DRAG THE ICON ON THE LEFT TO THE PLACE WHERE IT FITS",
-            "VERIFY THAT YOU ARE HUMAN",
-            "VERIFY YOU ARE HUMAN",
-            "TRY AGAIN",
-        ]
-        purchase_frame_markers = [*page_markers, "I AM HUMAN", "SKIP"]
-        purchase_frame_marker_pairs = [("PLEASE TRY AGAIN", "VERIFY")]
+        # If Talon error/challenge container exists and is explicitly hidden, the security check is NOT active
+        talon_container = page.locator("#talon_container_egs_quick_purchase_prod, div[id^='talon_container']")
+        with suppress(Exception):
+            if await talon_container.count() > 0 and not await talon_container.first.is_visible():
+                return False
 
         visible_locators = [
             page.get_by_text("One more step", exact=False),
@@ -1512,15 +1506,26 @@ class EpicGames:
         if await EpicGames._visible_hcaptcha_frame_urls(page):
             return True
 
-        page_text = await EpicGames._page_text(page)
-        if any(marker in page_text for marker in page_markers):
-            return True
+        purchase_frame_markers = [
+            "ONE MORE STEP",
+            "PLEASE COMPLETE A SECURITY CHECK TO CONTINUE",
+            "PLEASE DRAG THE ICON ON THE BOTTOM TO THE PLACE WHERE IT FITS",
+            "PLEASE DRAG THE ICON ON THE LEFT TO THE PLACE WHERE IT FITS",
+            "VERIFY THAT YOU ARE HUMAN",
+            "VERIFY YOU ARE HUMAN",
+            "I AM HUMAN",
+            "SKIP",
+        ]
+        purchase_frame_marker_pairs = [("PLEASE TRY AGAIN", "VERIFY")]
 
         purchase_frame_text = await EpicGames._purchase_frame_text(page)
-        return any(marker in purchase_frame_text for marker in purchase_frame_markers) or any(
-            all(marker in purchase_frame_text for marker in markers)
-            for markers in purchase_frame_marker_pairs
-        )
+        if purchase_frame_text:
+            return any(marker in purchase_frame_text for marker in purchase_frame_markers) or any(
+                all(marker in purchase_frame_text for marker in markers)
+                for markers in purchase_frame_marker_pairs
+            )
+
+        return False
 
     async def _resolve_checkout_security_check(
         self, page: Page, agent: AgentV, url: str, max_wait_ms: int = 600000

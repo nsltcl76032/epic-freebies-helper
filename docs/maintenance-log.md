@@ -1794,3 +1794,15 @@
   - `docs/maintenance-log.md`
 - 处理结果：
   - 在 `_resolve_checkout_security_check` 中增加对 `TRY AGAIN` 按钮的自动检测与点击处理，并将其纳入安全验证识别词列表，确保失败后能顺畅重新加载新题目继续求解。
+
+### 2026-11-06 修复 Talon 隐藏状态下误判 security check 可见导致死锁的问题
+
+- 现象：
+  - 点击结账后已成功弹出结算页面并呈现 `Add to library` 按钮，但脚本持续进入 `_resolve_checkout_security_check` 并在后台空等验证码 600 秒超时。
+- 根因判断：
+  - `_is_checkout_security_check_visible` 使用 `_page_text` 全局匹配 body 文本，而 Talon container 在带有 `visibility: hidden; opacity: 0` 时其 DOM 文本仍会被抓取出来，导致误判为“安全验证始终可见”。
+- 改动文件：
+  - `app/services/epic_games_service.py`
+  - `docs/maintenance-log.md`
+- 处理结果：
+  - 增加对 Talon container 隐藏状态的显式排除，移除粗暴的全局 body 文本匹配，仅在真正可见时判定为 security check，让结算抽屉顺畅完成订单提交。
