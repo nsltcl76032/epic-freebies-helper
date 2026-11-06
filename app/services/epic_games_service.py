@@ -47,7 +47,7 @@ URL_PRODUCT_PAGE = "https://store.epicgames.com/en-US/p/"
 URL_PRODUCT_BUNDLES = "https://store.epicgames.com/en-US/bundles/"
 URL_ORDER_HISTORY = "https://www.epicgames.com/account/v2/payment/ajaxGetOrderHistory"
 PURCHASE_IFRAME_SELECTOR = (
-    "//iframe[contains(@id, 'webPurchaseContainer') or contains(@src, 'purchase')]"
+    "//iframe[contains(@id, 'webPurchaseContainer') or contains(@src, 'purchase') or contains(@src, 'checkout') or contains(@title, 'Checkout')]"
 )
 # 商品页购买按钮：新版商店用 sidebarBuyButton（data-testid 已不再出现），旧版用
 # purchase-cta-button。后面几个按按钮文案兜底，兼顾英文、中文和 Add to Cart 流程。

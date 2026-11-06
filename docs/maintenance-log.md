@@ -1806,3 +1806,14 @@
   - `docs/maintenance-log.md`
 - 处理结果：
   - 增加对 Talon container 隐藏状态的显式排除，移除粗暴的全局 body 文本匹配，仅在真正可见时判定为 security check，让结算抽屉顺畅完成订单提交。
+
+### 2026-11-06 适配 Epic 新版结算 iframe 选择器（/checkout?purchaseToken=...）
+
+- 现象：
+  - 点击商品页 `Get` 按钮后，Epic 前端弹出了 `title="Checkout" src="/checkout?purchaseToken=..."` 的结账 iframe。
+  - 原 `PURCHASE_IFRAME_SELECTOR` 仅匹配 `webPurchaseContainer` 或 `purchase`，导致未能识别该结算 iframe，误判为点击无响应（`click_no_effect`）。
+- 改动文件：
+  - `app/services/epic_games_service.py`
+  - `docs/maintenance-log.md`
+- 处理结果：
+  - 将 `PURCHASE_IFRAME_SELECTOR` 扩展为支持 `contains(@src, 'checkout')` 与 `contains(@title, 'Checkout')`，确保即时结算抽屉能被准确捕获并执行 `Add to library` 提交流程。
